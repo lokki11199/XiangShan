@@ -28,7 +28,6 @@ import utility.XSPerfHistogram
 import xiangshan.frontend.bpu.BasePredictor
 import xiangshan.frontend.bpu.BasePredictorIO
 import xiangshan.frontend.bpu.HalfAlignHelper
-import xiangshan.frontend.bpu.TageTableInfo
 
 /**
  * This module is the implementation of the TAGE (TAgged GEometric history length predictor).
@@ -190,6 +189,7 @@ class Tage(implicit p: Parameters) extends BasePredictor with HasTageParameters 
     io.meta.entries(i).altTableIdx       := OHToUInt(altTableOH)
     io.meta.entries(i).altWayIdx         := OHToUInt(alt.hitWayMaskOH)
     io.meta.entries(i).altTakenCtr       := alt.takenCtr
+    io.meta.entries(i).altUsefulCtr      := alt.usefulCtr
 
     XSPerfAccumulate(
       s"s2_branch_${i}_multihit_on_same_table",
@@ -399,8 +399,7 @@ class Tage(implicit p: Parameters) extends BasePredictor with HasTageParameters 
       alt.hitWayMaskOH := Mux(meta.hasAlt, UIntToOH(meta.altWayIdx, MaxNumWays), 0.U)
       alt.tag          := t2_rawTag(meta.altTableIdx) ^ position
       alt.takenCtr     := meta.altTakenCtr
-      // Alternate training never writes useful SRAM. Its useful counter is unavailable on the meta path.
-      alt.usefulCtr := UsefulCounter.Zero
+      alt.usefulCtr    := meta.altUsefulCtr
     }.otherwise { // use result from sram read resp
       hasProvider     := hitTableMask.reduce(_ || _)
       providerTableOH := getLongestHistTableOH(hitTableMask).asUInt
@@ -436,10 +435,11 @@ class Tage(implicit p: Parameters) extends BasePredictor with HasTageParameters 
       !(hasProvider && providerTableOH(NumTables - 1)) &&
       !(hasProvider && !useProvider && providerPred === actualTaken && provider.takenCtr.isWeak)
 
-    val needUpdateProviderCtr    = !provider.takenCtr.shouldHold(actualTaken) && hasProvider
-    val needUpdateProviderUseful = !provider.usefulCtr.isSaturatePositive && incProviderUsefulCtr && hasProvider
-
-    val needUpdateAltCtr = !alt.takenCtr.shouldHold(actualTaken) && useAlt
+    // Meta and reread snapshots can be stale. Let the write buffer apply each training event
+    // to its latest counters and decide whether the resulting values actually change.
+    val needUpdateProviderCtr    = hasProvider
+    val needUpdateProviderUseful = incProviderUsefulCtr
+    val needUpdateAltCtr         = useAlt
 
     // Train the selector only when it can change the prediction.
     // When the weak provider and alternate/base disagree, exactly one of them is correct.
@@ -459,6 +459,7 @@ class Tage(implicit p: Parameters) extends BasePredictor with HasTageParameters 
     trainInfo.providerEntry.takenCtr := providerNewTakenCtr
     trainInfo.providerOldUsefulCtr   := provider.usefulCtr
     trainInfo.providerNewUsefulCtr   := providerNewUsefulCtr
+    trainInfo.incProviderUsefulCtr   := incProviderUsefulCtr
 
     trainInfo.hasAlt            := hasAlt
     trainInfo.useAlt            := useAlt
@@ -579,16 +580,7 @@ class Tage(implicit p: Parameters) extends BasePredictor with HasTageParameters 
   private val t3_usefulResetStart = t3_fire && usefulResetCtr.isSaturatePositive && !usefulResetInFlight
 
   tables.zipWithIndex.foreach { case (table, tableIdx) =>
-    implicit val info: TageTableInfo = TableInfos(tableIdx)
-
-    val writeWayMask    = Wire(Vec(NumWays, Bool()))
-    val writeEntryEn    = Wire(Vec(NumWays, Bool()))
-    val writeUsefulEn   = Wire(Vec(NumWays, Bool()))
-    val writeEntries    = Wire(Vec(NumWays, new TageEntry))
-    val writeUsefulCtrs = Wire(Vec(NumWays, UsefulCounter()))
-    val actualTakenMask = Wire(Vec(NumWays, Bool()))
-
-    (0 until NumWays).foreach { wayIdx =>
+    table.io.writeReq.zipWithIndex.foreach { case (writeReq, wayIdx) =>
       val (providerWriteCtr, providerWriteUseful, altWriteCtr) = t3_trainInfoVec.map { info =>
         val providerNeedUpdateCtr =
           info.valid && info.needUpdateProviderCtr && info.providerTableOH(tableIdx) && info.providerWayOH(wayIdx)
@@ -615,27 +607,22 @@ class Tage(implicit p: Parameters) extends BasePredictor with HasTageParameters 
 
       val updateEn                = hitProvider || hitAlt
       val updateEntry             = Mux(hitProvider, providerInfo.providerEntry, altInfo.altEntry)
+      val updateTakenCtr          = providerWriteCtr.reduce(_ || _) || hitAlt
+      val updateUsefulCtr         = Mux(hitProvider, providerInfo.providerNewUsefulCtr, altInfo.altOldUsefulCtr)
       val updateBranchActualTaken = Mux(hitProvider, providerInfo.actualTaken, altInfo.actualTaken)
 
       val allocateEn = t3_allocate && t3_allocateTableOH(tableIdx) && t3_allocateWayOH(wayIdx)
 
-      writeWayMask(wayIdx)    := updateEn || allocateEn
-      writeEntryEn(wayIdx)    := providerWriteCtr.reduce(_ || _) || hitAlt || allocateEn
-      writeUsefulEn(wayIdx)   := providerWriteUseful.reduce(_ || _) || allocateEn
-      writeEntries(wayIdx)    := Mux(allocateEn, t3_allocateEntry, updateEntry)
-      writeUsefulCtrs(wayIdx) := Mux(allocateEn, UsefulCounter.Init, providerInfo.providerNewUsefulCtr)
-      actualTakenMask(wayIdx) := Mux(allocateEn, t3_allocateBranch.bits.taken, updateBranchActualTaken)
+      writeReq.valid               := t3_fire && (updateEn || allocateEn)
+      writeReq.bits.setIdx         := t3_setIdx(tableIdx)
+      writeReq.bits.bankMask       := t3_bankMask(tableIdx)
+      writeReq.bits.entry          := Mux(allocateEn, t3_allocateEntry, updateEntry)
+      writeReq.bits.usefulCtr      := Mux(allocateEn, UsefulCounter.Init, updateUsefulCtr)
+      writeReq.bits.allocate       := allocateEn
+      writeReq.bits.updateTakenCtr := !allocateEn && updateTakenCtr
+      writeReq.bits.actualTaken    := updateBranchActualTaken
+      writeReq.bits.incUseful      := !allocateEn && hitProvider && providerInfo.incProviderUsefulCtr
     }
-
-    table.io.writeReq.valid                := t3_fire && writeWayMask.reduce(_ || _)
-    table.io.writeReq.bits.setIdx          := t3_setIdx(tableIdx)
-    table.io.writeReq.bits.bankMask        := t3_bankMask(tableIdx)
-    table.io.writeReq.bits.wayMask         := writeWayMask.asUInt
-    table.io.writeReq.bits.writeEntryEn    := writeEntryEn
-    table.io.writeReq.bits.writeUsefulEn   := writeUsefulEn
-    table.io.writeReq.bits.entries         := writeEntries
-    table.io.writeReq.bits.usefulCtrs      := writeUsefulCtrs
-    table.io.writeReq.bits.actualTakenMask := actualTakenMask
 
     table.io.usefulResetStart := t3_usefulResetStart
   }
