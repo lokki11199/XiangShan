@@ -334,6 +334,7 @@ module fv_boundary #(
                     ((hold_noreq == 8'hff) ? hold_noreq : hold_noreq + 8'd1);
     end
   end
+`ifndef COVER_AS_ASSERT
   always_comb if (!rst) begin
     P1_reset_point_clean:   assert(!s_reset || nothing_outstanding);
     P2_nothing_crosses:     assert(!(s_reset || s_release) || !any_fire);
@@ -367,6 +368,7 @@ module fv_boundary #(
     P19_reset_point_after_done_idle: assert(!(core_reset && !core_reset_q) || (l1_done_q && l1_idle_q));
     P20_run_only_after_frontend: assert(!(s_idle && st_was_release) || !fe_rst_q);
   end
+`endif
 
   // ---------------- covers (non-vacuity) ----------------
   // transactions in flight when the procedure starts, then a full sequence back to sIdle
@@ -398,6 +400,7 @@ module fv_boundary #(
       if (gate_answered && s_idle) gate_answered_done <= 1'b1;
     end
   end
+`ifndef COVER_AS_ASSERT
   always_comb if (!rst) begin
     C1_inflight_at_start_then_reset: cover(seen_reset && st_prb && st_rel && st_acq && st_cmid);
     C2_more_inflight_at_start:       cover(seen_reset && st_gack && st_get && st_amid);
@@ -409,4 +412,25 @@ module fv_boundary #(
     C8_icachectrl_inflight_at_start_then_reset: cover(seen_reset && st_k && s_idle);
     C9_core_garbage_in_reset_then_run: cover(garbage_done);
   end
+`else
+  // COVER_AS_ASSERT (for engines without cover, e.g. abc bmc3): -DCOVER_ONLY=n turns cover Cn into
+  // assert(!(cond)); the cover is reached at the step where this assertion fails. All P* assertions are
+  // left out of such a run.
+`ifdef COVER_ONLY
+  localparam int CSEL = `COVER_ONLY;
+`else
+  localparam int CSEL = 0;
+`endif
+  always_comb if (!rst) begin
+    if (CSEL == 1) C1_inflight_at_start_then_reset: assert(!(seen_reset && st_prb && st_rel && st_acq && st_cmid));
+    if (CSEL == 2) C2_more_inflight_at_start:       assert(!(seen_reset && st_gack && st_get && st_amid));
+    if (CSEL == 3) C3_probe_held_then_delivered:    assert(!held_then_delivered);
+    if (CSEL == 4) C4_back_to_idle:                 assert(!(seen_reset && s_idle && !req));
+    if (CSEL == 5 && KEEP)  C5_probe_in_first_drain_cycle_held_then_delivered: assert(!c5_done);
+    if (CSEL == 6) C6_reset_held_long_then_run:     assert(!long_reset_done);
+    if (CSEL == 7 && !KEEP) C7_probe_answered_by_gate_in_reset_then_run: assert(!gate_answered_done);
+    if (CSEL == 8) C8_icachectrl_inflight_at_start_then_reset: assert(!(seen_reset && st_k && s_idle));
+    if (CSEL == 9) C9_core_garbage_in_reset_then_run: assert(!garbage_done);
+  end
+`endif
 endmodule
