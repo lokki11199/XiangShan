@@ -71,13 +71,19 @@ s_compile() { MILL_LOG=$LOG/compile.mill "$VER/scripts/mill_retry.sh" xiangshan.
   echo "DETAIL: xiangshan.compile OK"; }
 
 s_elab_modules() {
-  [ -e "$HARNESS" ] && { echo "DETAIL: $HARNESS already exists (leftover?), not touching it"; return 1; }
-  cp "$VER/elab/CoreResetElabHarness.scala" "$HARNESS" || return 1
-  trap 'rm -f "$HARNESS"' EXIT INT TERM
+  local own=0
+  if [ -e "$HARNESS" ]; then
+    cmp -s "$HARNESS" "$VER/elab/CoreResetElabHarness.scala" \
+      || { echo "DETAIL: $HARNESS exists and differs from elab/ (leftover?), not touching it"; return 1; }
+    echo "existing identical copy used, left in place"
+  else
+    cp "$VER/elab/CoreResetElabHarness.scala" "$HARNESS" || return 1
+    own=1; trap 'rm -f "$HARNESS"' EXIT INT TERM
+  fi
   rm -rf "$ELAB"
   "$VER/scripts/mill_retry.sh" xiangshan.runMain xiangshan.CoreResetElab "$ELAB" ctrl_keep,ctrl_sweep,gates \
     || { echo "DETAIL: CoreResetElab failed"; return 1; }
-  rm -f "$HARNESS"
+  [ $own = 1 ] && rm -f "$HARNESS"
   rm -rf "$LOG/rtl"; mkdir -p "$LOG/rtl"
   python3 "$VER/scripts/extract_rtl.py" "$ELAB" "$LOG/rtl" || { echo "DETAIL: extract_rtl.py failed"; return 1; }
   if diff -r "$LOG/rtl" "$VER/rtl"; then echo "DETAIL: 3 modules elaborated, rtl/ is current"
