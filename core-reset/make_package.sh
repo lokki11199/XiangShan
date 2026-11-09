@@ -273,6 +273,11 @@ CoreResetKeepL1: false     # SWEEP; true (по умолчанию) — KEEP
 | регрессия: +EQUIV мутанты PASS | @k_r_eq@ | @s_r_eq@ |
 | длинный прогон (soak) PASS | @k_soak@ | @s_soak@ |
 
+Движки формальной проверки: доказательства (rstCycles = 100 и 16) — `abc pdr` без ограничения глубины; цели cover
+записаны как утверждения `!Cn` и проверяются тем же `abc pdr` (шаг в таблице — длина трассы, найденной pdr, не
+обязательно кратчайшей); мутанты — `abc bmc3` до глубины 60 с лимитом 300 с, затем `abc pdr`. BMC всей модели не
+запускается (до глубины 25–30 он не доходит).
+
 Эквивалентность RTL (из Chisel) и моделей (`results_equiv.txt`, BMC 30 и доказательство):
 
 | миттер | BMC 30 | доказательство |
@@ -285,9 +290,22 @@ Elaboration (`results_elab.txt`): @elabtxt@
 
 ## Как запускать проверки
 
-Нужны Verilator 5.050, Yosys 0.70, SymbiYosys 0.70 (`sby`, `yosys-abc`) и SMT-решатель yices для
-`yosys-smtbmc` (`SMT_SOLVER=yices`; иначе boolector или z3). Инструменты берутся из `scripts/env.sh`:
+Нужны Verilator 5.050, Yosys 0.70, SymbiYosys 0.70 (`sby`, `yosys-abc`) и SMT-решатель yices
+(`SMT_SOLVER=yices`; иначе boolector или z3; нужен для миттеров эквивалентности). Инструменты берутся из `scripts/env.sh`:
 `OSS_CAD_SUITE=/путь/к/oss-cad-suite` или `EDA_PREFIX` (по умолчанию `/opt/eda`), затем из `PATH`.
+
+Единая точка входа:
+
+```sh
+verification/check.sh --quick    # около 10 мин: mill xiangshan.compile, elaboration модулей (RTL должен совпасть с rtl/),
+                                 # smoke (сценарии 1 2 3 5 6 7 × KEEP/SWEEP), формально rstCycles = 16
+verification/check.sh --full     # плюс формально k и s целиком, эквивалентность RTL и моделей, регрессия, soak,
+                                 # полная elaboration XSNoCTop (KEEP и SWEEP; около 9 ГБ памяти, не вместе с регрессией)
+```
+
+`check.sh` (и шаги mill / elaboration) рассчитан на раскладку ветки: каталог `verification/` лежит в
+`<XiangShan>/core-reset/verification` дерева с установленным патчем. Скрипты симуляции и формальной проверки
+(`scripts/*.sh`, `formal/*.sh`) работают из `verification/` в любом месте.
 
 ```sh
 cd verification
@@ -313,7 +331,7 @@ Verilator 5.050 (oss-cad-suite с 5.049 был недоступен; seed-ы р�
 - `XiangShan/` — изменённые и новые файлы `src/` (деревом);
 - `_original/XiangShan/` — те же файлы в upstream c098f99 (новых файлов там нет);
 - `core-reset.patch` — `git diff 7b16188 HEAD --ignore-submodules -- src/` (применяется и к c098f99);
-- `install.sh`, `xscore_reset_v5.pdf`, `verification/`.
+- `install.sh`, `xscore_reset_v5.pdf`, `verification/` (включая `check.sh`).
 '''
 sub = {'HEAD': head, 'eqtxt': eqtxt, 'eqsum': eqsum, 'elabtxt': elabtxt}
 for c, n in (('k', 'k'), ('s', 's')):
