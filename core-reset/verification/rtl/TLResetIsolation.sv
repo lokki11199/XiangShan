@@ -134,13 +134,13 @@ module TLResetIsolation(
       if (~reset & _quiets_T & quiets_dLast & ~(_quiets_T_2 & ~quiets_aFirst_r_counter)
           & _quiets_T_18) begin
         if (`ASSERT_VERBOSE_COND_)
-          $error("Assertion failed: TLResetIsolation: A->D underflow\n    at CoreReset.scala:244 assert(!(in.d.fire && dLast && !(in.a.fire && aFirst) && reqs === 0.U), \"TLResetIsolation: A->D underflow\")\n");
+          $error("Assertion failed: TLResetIsolation: A->D underflow\n    at CoreReset.scala:246 assert(!(in.d.fire && dLast && !(in.a.fire && aFirst) && reqs === 0.U), \"TLResetIsolation: A->D underflow\")\n");
         if (`STOP_COND_)
           $fatal;
       end
       if (~reset & io_isolate & (|quiets_reqs)) begin
         if (`ASSERT_VERBOSE_COND_)
-          $error("Assertion failed: TLResetIsolation: request in flight while XSCore is in reset\n    at CoreReset.scala:245 assert(!(io.isolate && reqs =/= 0.U), \"TLResetIsolation: request in flight while XSCore is in reset\")\n");
+          $error("Assertion failed: TLResetIsolation: request in flight while XSCore is in reset\n    at CoreReset.scala:247 assert(!(io.isolate && reqs =/= 0.U), \"TLResetIsolation: request in flight while XSCore is in reset\")\n");
         if (`STOP_COND_)
           $fatal;
       end

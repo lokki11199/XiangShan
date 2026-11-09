@@ -104,19 +104,19 @@ module CoreResetCtrl_keep(
     always @(posedge clock) begin
       if (~reset & io_inReset_0 & ~io_gatesQuiet) begin
         if (`ASSERT_VERBOSE_COND_)
-          $error("Assertion failed: CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is in reset\n    at CoreReset.scala:336 assert(!(state === sReset && !io.gatesQuiet),\n");
+          $error("Assertion failed: CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is in reset\n    at CoreReset.scala:343 assert(!(state === sReset && !io.gatesQuiet),\n");
         if (`STOP_COND_)
           $fatal;
       end
       if (~reset & closed != (io_inReset_0 | _coreUp_T_2)) begin
         if (`ASSERT_VERBOSE_COND_)
-          $error("Assertion failed: CoreResetCtrl: isolation out of step with the state\n    at CoreReset.scala:339 assert(closed === (state === sReset || state === sRelease), \"CoreResetCtrl: isolation out of step with the state\")\n");
+          $error("Assertion failed: CoreResetCtrl: isolation out of step with the state\n    at CoreReset.scala:346 assert(closed === (state === sReset || state === sRelease), \"CoreResetCtrl: isolation out of step with the state\")\n");
         if (`STOP_COND_)
           $fatal;
       end
       if (~reset & ~(~coreReset | closed)) begin
         if (`ASSERT_VERBOSE_COND_)
-          $error("Assertion failed: CoreResetCtrl: XSCore reset without isolation\n    at CoreReset.scala:340 assert(!coreReset || closed, \"CoreResetCtrl: XSCore reset without isolation\")\n");
+          $error("Assertion failed: CoreResetCtrl: XSCore reset without isolation\n    at CoreReset.scala:347 assert(!coreReset || closed, \"CoreResetCtrl: XSCore reset without isolation\")\n");
         if (`STOP_COND_)
           $fatal;
       end

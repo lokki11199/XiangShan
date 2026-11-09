@@ -86,8 +86,15 @@ s_elab_modules() {
   [ $own = 1 ] && rm -f "$HARNESS"
   rm -rf "$LOG/rtl"; mkdir -p "$LOG/rtl"
   python3 "$VER/scripts/extract_rtl.py" "$ELAB" "$LOG/rtl" || { echo "DETAIL: extract_rtl.py failed"; return 1; }
-  if diff -r "$LOG/rtl" "$VER/rtl"; then echo "DETAIL: 3 modules elaborated, rtl/ is current"
-  else echo "DETAIL: rtl/ is stale, rerun formal/run_equiv.sh with a fresh extract"; return 1; fi
+  # compare with the committed rtl/, ignoring source line numbers inside the assert messages
+  local N='s/(CoreReset|XSTile)\.scala:[0-9]+(:[0-9]+)?/\1.scala:N/g' f
+  rm -rf "$LOG/rtl_n" "$LOG/rtl_c"; mkdir -p "$LOG/rtl_n" "$LOG/rtl_c"
+  for f in "$LOG"/rtl/*; do sed -E "$N" "$f" > "$LOG/rtl_n/$(basename "$f")"; done
+  for f in "$VER"/rtl/*; do sed -E "$N" "$f" > "$LOG/rtl_c/$(basename "$f")"; done
+  if ! diff -r "$LOG/rtl_n" "$LOG/rtl_c"; then
+    echo "DETAIL: rtl/ is stale, rerun formal/run_equiv.sh with a fresh extract"; return 1
+  elif diff -rq "$LOG/rtl" "$VER/rtl" > /dev/null; then echo "DETAIL: 3 modules elaborated, rtl/ is current"
+  else echo "DETAIL: 3 modules elaborated, rtl/ differs only in source line numbers"; fi
 }
 
 s_smoke() {
