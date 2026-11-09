@@ -1,2 +1,9 @@
 tools: Yosys 0.70 , abc pdr, smtbmc yices
 === configuration k: KEEP
+design prove rstCycles=100 (abc pdr, unbounded): PASS  (109.74 sec)
+design prove rstCycles=16 (abc pdr, unbounded): PASS  (6.32 sec)
+design      bmc: not run (the unbounded proofs with abc pdr cover every depth; the assumptions are shown satisfiable by the covers reached)
+design      cover (as assert, abc pdr; step = length of the trace found by pdr, not necessarily the shortest): PASS (8 reached: C1 step 7, C2 step 8, C3 step 27, C4 step 26, C5 step 27, C6 step 51, C8 step 27, C9 step 27,)
+CTRL_MUTANT_NO_DRAIN             bmc : FAIL at cycle 4  P19_reset_point_after_done_idle P1_reset_point_clean 
+CTRL_MUTANT_STALE_QUIET          bmc : FAIL at cycle 4  P1_reset_point_clean 
+CTRL_MUTANT_NO_L1_IDLE           bmc : FAIL at cycle 4  P19_reset_point_after_done_idle 
