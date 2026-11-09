@@ -3,3 +3,4 @@ build/
 formal/*/
 !formal/*.sv
 !formal/*.sh
+formal/*.sby
