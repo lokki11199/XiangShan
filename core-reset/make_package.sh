@@ -38,10 +38,11 @@ for d in model tb rtl elab scripts; do mkdir -p "$VO/$d"; cp -r "$V/$d/." "$VO/$
 find "$VO" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$VO/formal"
 for f in fv_boundary.sv run_formal.sh eq_chisel.sv run_equiv.sh; do cp "$V/formal/$f" "$VO/formal/"; done
+cp "$V/check.sh" "$VO/"
 for f in "$V"/results_*.txt "$V"/results_*.log "$V"/regress_summary.txt "$V"/coverage_*.json; do
   [ -f "$f" ] && cp "$f" "$VO/"
 done
-chmod +x "$VO"/scripts/*.sh "$VO"/formal/*.sh 2>/dev/null || true
+chmod +x "$VO"/check.sh "$VO"/scripts/*.sh "$VO"/formal/*.sh 2>/dev/null || true
 
 # 5. install.sh
 cat > "$OUT/install.sh" <<'EOT'
@@ -123,9 +124,9 @@ def formal(c):
     r = {}
     m = re.search(r'prove rstCycles=100.*?: (\w+)\s+\(([\d.]+) sec\)', t); r['p100'] = '%s (%s с)' % (m.group(1), m.group(2)) if m else ND
     m = re.search(r'prove rstCycles=16.*?: (\w+)\s+\(([\d.]+) sec\)', t); r['p16'] = '%s (%s с)' % (m.group(1), m.group(2)) if m else ND
-    m = re.search(r'bmc 40: (\w+)', t); r['bmc'] = m.group(1) if m else ND
-    m = re.search(r'cover *: (\w+) \((\d+) reached', t); r['cover'] = '%s (%s целей)' % (m.group(1), m.group(2)) if m else ND
-    mut = re.findall(r'^(\S+_MUTANT_\S+)\s+bmc : (\w+)', t, re.M)
+    r['bmc'] = 'не запускался (доказательства abc pdr без ограничения глубины)' if re.search(r'design\s+bmc: not run', t) else ND
+    m = re.search(r'cover[^:]*: (\w+) \((\d+) reached', t); r['cover'] = '%s (%s целей, abc pdr)' % (m.group(1), m.group(2)) if m else ND
+    mut = re.findall(r'^(\S+_MUTANT_\S+)\s+bmc[^:]*: (\w+)', t, re.M)
     exp = common + extra[c]
     if mut:
         got = sum(1 for _, s in mut if s == 'FAIL')
@@ -261,8 +262,8 @@ CoreResetKeepL1: false     # SWEEP; true (по умолчанию) — KEEP
 |---|---|---|
 | формально: доказательство без границы, rstCycles = 100 | @k_p100@ | @s_p100@ |
 | формально: доказательство без границы, rstCycles = 16 | @k_p16@ | @s_p16@ |
-| формально: BMC 40 | @k_bmc@ | @s_bmc@ |
-| формально: cover | @k_cover@ | @s_cover@ |
+| формально: BMC всей модели | @k_bmc@ | @s_bmc@ |
+| формально: cover (как assert) | @k_cover@ | @s_cover@ |
 | формально: мутанты, найден контрпример | @k_mut@ | @s_mut@ |
 | формально: эквивалентные мутанты доказаны | @k_eq@ | @s_eq@ |
 | формально: итог прогона | @k_fin@ | @s_fin@ |
