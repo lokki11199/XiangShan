@@ -25,7 +25,8 @@
 //   - DCache drain: the DCache starts no new Release once the controller has left sIdle/sFlush
 //     (checked in simulation by cr_txmon: no Release starts after l1.done).
 //   - l1.done only while l1.req; l1.idle is unconstrained (also in reset); l1.alive is 0 while the core is in
-//     reset and rises within 3 cycles after it, and stays (needed only for the bound of P8B).
+//     reset and rises within 6 cycles after it (the DCache's alive is not ordered against the frontend reset),
+//     and stays (needed only for the bound of P8B, RST + 16 still holds with the later alive).
 // Reference trackers below count transactions independently of the gate's own counters: A, D, E on the
 // L2 side; Probes and C messages on the core side (a Probe that the gate answers itself never reaches the
 // core: it is tracked apart, from the L2 side).
@@ -299,9 +300,9 @@ module fv_boundary #(
   always_ff @(posedge clk) alive_wait <= (rst || core_rst || alive) ? 3'd0 : alive_wait + 3'd1;
   logic p_core_rst; always_ff @(posedge clk) p_core_rst <= core_rst;
   always_comb if (pv) begin
-    // alive stays high once the DCache is out of reset, and rises within 3 cycles after it
+    // alive stays high once the DCache is out of reset, and rises within 6 cycles after it
     if (p_alive && !core_rst && !p_core_rst) assume(alive);
-    if (alive_wait >= 3'd3) assume(alive);
+    if (alive_wait >= 3'd6) assume(alive);
   end
 
   logic [7:0] rcnt;   // cycles in sReset
