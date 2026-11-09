@@ -9,7 +9,7 @@
 # the unbounded proof.
 #   ./run_formal.sh [k|s ...]       (default: both)
 # Engines: prove = abc pdr; mutants (bmc 60) = abc bmc3 (BMC_ENGINE=smtbmc selects smtbmc + SMT solver instead);
-# a mutant not caught within 60 cycles is rerun with abc pdr (prove mode, reported with "(pdr)"). A mutant that abc
+# a mutant not caught within 60 cycles or MUT_TIMEOUT (300 s) is rerun with abc pdr (prove mode, reported with "(pdr)"). A mutant that abc
 # refutes without naming the assertion is rerun with smtbmc to the depth of the failing step to get the label.
 # Covers (default, COVER_ENGINE=assert): each cover Cn is run as the assertion !(Cn) (COVER_AS_ASSERT,
 # COVER_ONLY=n) in prove mode with abc pdr: FAIL = cover reached ("step" = length of the trace found by pdr, not
@@ -62,6 +62,7 @@ mutants() {
 # MMIO reaches the ICache control registers). Both are kept in the design as explicit masks.
 EQUIV="GATE_MUTANT_NO_ISO_A ISO_MUTANT_ALWAYS_QUIET"
 fails=0
+MUT_TIMEOUT=${MUT_TIMEOUT:-300}   # wall-clock limit (s) of the bmc run of one mutant; then abc pdr
 CFGS=${*:-k s}
 for c in $CFGS; do
   D=$(cfgdefs $c)
@@ -91,7 +92,7 @@ for c in $CFGS; do
   fi
   for m in $(mutants $c); do
     n=${c}_mut_$(echo $m | tr 'A-Z' 'a-z')
-    mk $n "$D16 $m" bmc; sby -f $n.sby >/dev/null 2>&1; r=$(res $n)
+    rm -rf $n; mk $n "$D16 $m" bmc; timeout $MUT_TIMEOUT sby -f $n.sby >/dev/null 2>&1; r=$(res $n)
     why=$(grep -o "Assert failed in fv_boundary: [A-Za-z0-9_]*" $n/logfile.txt | head -4 | sed 's/.*: //' | sort -u | tr '\n' ' ')
     step=$(grep -o "Checking assertions in step [0-9]*" $n/logfile.txt | tail -1 | grep -o "[0-9]*$")
     if [ "$BMC_ENG" = "abc bmc3" ] && [ "$r" = FAIL ]; then
@@ -102,8 +103,8 @@ for c in $CFGS; do
       fi
     fi
     tag="bmc "
-    if [ "$r" != FAIL ]; then   # not caught within 60 cycles: unbounded run
-      mk ${n}_pdr "$D16 $m" prove; sby -f ${n}_pdr.sby >/dev/null 2>&1; r=$(res ${n}_pdr); tag="bmc 60 clean, (pdr)"
+    if [ "$r" != FAIL ]; then   # not caught within 60 cycles / the time limit: unbounded run
+      mk ${n}_pdr "$D16 $m" prove; sby -f ${n}_pdr.sby >/dev/null 2>&1; r=$(res ${n}_pdr); tag="bmc 60 clean or >${MUT_TIMEOUT}s, (pdr)"
       step=$(frames ${n}_pdr)
       why=$(grep -o "Assert failed in fv_boundary: [A-Za-z0-9_]*" ${n}_pdr/logfile.txt | head -4 | sed 's/.*: //' | sort -u | tr '\n' ' ')
       if [ "$r" = FAIL ] && [ -z "$why" ] && [ -n "$step" ]; then
