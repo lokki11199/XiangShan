@@ -32,18 +32,26 @@ def formal(cfg):
         if m:
             r['prove'][int(m.group(1))] = (m.group(2), float(m.group(3)))
             continue
+        m = re.match(r'design\s+bmc: not run', line)
+        if m:
+            r['bmc'] = 'not run'
+            continue
         m = re.match(r'design\s+bmc (\d+): (\w+) \(assumptions satisfiable: (\w+)\)', line)
         if m:
             r['bmc'] = (int(m.group(1)), m.group(2), m.group(3))
             continue
-        m = re.match(r'design\s+cover : (\w+) \((\d+) reached: (.*)\)', line)
+        m = re.match(r'design\s+cover[^:]*: (\w+) \((\d+) reached: (.*)\)', line)
         if m:
             r['cover'] = (m.group(1), int(m.group(2)))
-            r['covers'] = [(a, int(b)) for a, b in re.findall(r'(\w+) step (\d+)', m.group(3))]
+            r['covers'] = [(a, int(b)) for a, b in re.findall(r'(C\d+) step (\d+)', m.group(3))]
             continue
         m = re.match(r'(\w+)\s+bmc : (\w+) at cycle (\d+)\s*(.*)', line)
         if m:
-            r['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split()))
+            r['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split(), 'bmc'))
+            continue
+        m = re.match(r'(\w+)\s+bmc \d+ clean or >\d+s, \(pdr\): (\w+) at cycle (\d+)\s*(.*)', line)
+        if m:
+            r['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split(), 'pdr'))
             continue
         m = re.match(r'(\w+)\s+prove: (\w+) \(equivalent', line)
         if m:

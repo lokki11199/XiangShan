@@ -161,7 +161,7 @@ def section71(C):
 
 def section72(C):
     s = [H(2, '7.2. Формальное доказательство')]
-    s.append(P('SymbiYosys (движок abc pdr — без ограничения глубины; BMC и cover — smtbmc, решатель yices) проверяет свойства '
+    s.append(P('SymbiYosys / abc проверяет свойства '
                'для всех достижимых состояний трёх гейтов (TL-C для DCache и два TL-UL ранних), `TLResetIsolation` и '
                '`CoreResetCtrl` (`formal/fv_boundary.sv`; модели один в один с `CoreReset.scala`, их RTL доказан эквивалентным в 7.1). '
                'Окружение произвольно в рамках правил TileLink: запрос сброса приходит и снимается в любой такт и держится '
@@ -178,7 +178,8 @@ def section72(C):
         'Сброс frontend: `fe_rst = core_rst || fe_q2`, frontend выходит на 2 такта позже остального ядра.',
         'Drain DCache: после перехода контроллера из sIdle / sFlush DCache не начинает новых Release (проверяет monitor в симуляции и '
         'assert в DCacheWrapper); `l1.done` только при `l1.req`; `l1.idle` свободен (и в сбросе); `l1.alive` = 0 в сбросе и '
-        'поднимается не позже чем через 3 такта после него (нужно только для границы P8B).',
+        'поднимается не позже чем через 6 тактов после него, в любом порядке относительно сброса frontend (нужно только для границы '
+        'P8B; она остаётся rstCycles + 16).',
     ])
     s.append(P('Независимые счётчики-эталоны (`fv_boundary.sv`) считают транзакции отдельно от счётчиков гейта: A, D, E — на стороне L2; '
                'Probe и C — на стороне ядра; Probe, на который гейт ответил сам, отслеживается отдельно.'))
@@ -188,8 +189,11 @@ def section72(C):
     s.append(P('Проверено 20 свойств (P8 включает P8B, P8N — только SWEEP, P12 — только SWEEP).', 'small'))
     # results
     s.append(P('<b>Результаты.</b> `results_formal_k.txt` (KEEP), `results_formal_s.txt` (SWEEP) — вывод `formal/run_formal.sh`: '
-               'доказательство (unbounded) при `rstCycles` = 100 и 16, BMC глубины 40 (допущения выполнимы), cover и мутанты '
-               '(BMC глубины 60 при `rstCycles` = 16 — короче трассы).'))
+               'доказательство: abc pdr без ограничения глубины при `rstCycles` = 100 и 16; cover: каждое Cn проверяется как '
+               'утверждение «!Cn» движком abc pdr (достижимо = найден контрпример; «шаг» — длина найденной трассы, не обязательно '
+               'кратчайшей); мутанты: abc bmc3 глубины 60 с лимитом 300 с, не пойманный там мутант перезапускается abc pdr (без '
+               'ограничения глубины); если abc не называет нарушенное свойство, его метка берётся из короткого перезапуска smtbmc '
+               '(yices) до найденной глубины; эквивалентные мутанты — abc pdr prove. BMC всей модели не запускался (см. врезку).'))
     rows = [['', 'KEEP', 'SWEEP']]
     fk, fs = C.formal.get('k'), C.formal.get('s')
 
@@ -202,6 +206,8 @@ def section72(C):
     def bm(f):
         if not f or not f['bmc']:
             return ND
+        if f['bmc'] == 'not run':
+            return 'не запускался'
         return '%s (допущения выполнимы: %s)' % (f['bmc'][1], 'да' if f['bmc'][2] == 'yes' else 'НЕТ')
 
     def cv(f):
@@ -219,32 +225,42 @@ def section72(C):
             return ND
         return '%d из %d доказаны' % (sum(1 for m in f['equiv'] if m[1] == 'PASS'), len(f['equiv']))
     rows += [['prove, rstCycles = 100', pv(fk, 100), pv(fs, 100)], ['prove, rstCycles = 16', pv(fk, 16), pv(fs, 16)],
-             ['BMC 40', bm(fk), bm(fs)], ['cover', cv(fk), cv(fs)], ['мутанты', mt(fk), mt(fs)],
+             ['BMC', bm(fk), bm(fs)], ['cover (abc pdr)', cv(fk), cv(fs)], ['мутанты', mt(fk), mt(fs)],
              ['эквивалентные мутанты (должны доказываться)', eqm(fk), eqm(fs)]]
     s.append(table(rows, [2.0, 1.9, 1.9]))
     # covers
     s.append(P('<b>Достижимость (cover).</b> Каждое сценарное условие достижимо при допущениях среды:'))
-    CV = {'C1_inflight_at_start_then_reset': 'в момент запроса открыты Probe, Release, Acquire, сообщение на середине C — и сброс состоялся',
-          'C2_more_inflight_at_start': 'в момент запроса открыты также GrantAck, Get и сообщение на середине A',
-          'C3_probe_held_then_delivered': 'Probe, предложенный в сбросе, ждёт и после сброса доставлен',
-          'C4_back_to_idle': 'после сброса контроллер вернулся в sIdle',
-          'C5_probe_in_first_drain_cycle_held_then_delivered': 'KEEP: Probe, предложенный в первом такте sDrain, держится весь сброс и доставлен',
-          'C6_reset_held_long_then_run': 'запрос держат дольше `rstCycles` + 24 такта, затем ядро запускается',
-          'C7_probe_answered_by_gate_in_reset_then_run': 'SWEEP: гейт ответил на Probe в сбросе, затем ядро запущено',
-          'C8_icachectrl_inflight_at_start_then_reset': 'запрос к регистрам ICache ctrl открыт в момент запроса сброса',
-          'C9_core_garbage_in_reset_then_run': 'выходы ядра в сбросе — мусор, затем ядро запущено'}
+    CV = {'C1': ('inflight_at_start_then_reset', 'в момент запроса открыты Probe, Release, Acquire, сообщение на середине C — и сброс состоялся'),
+          'C2': ('more_inflight_at_start', 'в момент запроса открыты также GrantAck, Get и сообщение на середине A'),
+          'C3': ('probe_held_then_delivered', 'Probe, предложенный в сбросе, ждёт и после сброса доставлен'),
+          'C4': ('back_to_idle', 'после сброса контроллер вернулся в sIdle'),
+          'C5': ('probe_in_first_drain_cycle_held_then_delivered', 'KEEP: Probe, предложенный в первом такте sDrain, держится весь сброс и доставлен'),
+          'C6': ('reset_held_long_then_run', 'запрос держат дольше `rstCycles` + 24 такта, затем ядро запускается'),
+          'C7': ('probe_answered_by_gate_in_reset_then_run', 'SWEEP: гейт ответил на Probe в сбросе, затем ядро запущено'),
+          'C8': ('icachectrl_inflight_at_start_then_reset', 'запрос к регистрам ICache ctrl открыт в момент запроса сброса'),
+          'C9': ('core_garbage_in_reset_then_run', 'выходы ядра в сбросе — мусор, затем ядро запущено')}
     rows = [['Cover', 'Что достигается', 'KEEP: шаг', 'SWEEP: шаг']]
-    names = [n for n in CV]
     dk = dict(fk['covers']) if fk and fk['covers'] else {}
     ds = dict(fs['covers']) if fs and fs['covers'] else {}
-    for n in names:
-        a = str(dk[n]) if n in dk else ('—' if fk and fk['covers'] and n not in dk and (n.startswith('C7')) else (ND if not fk or not fk['covers'] else 'нет'))
-        b = str(ds[n]) if n in ds else ('—' if fs and fs['covers'] and n.startswith('C5') else (ND if not fs or not fs['covers'] else 'нет'))
-        rows.append([n.split('_')[0] + ' `' + n.split('_', 1)[1] + '`', CV[n], a, b])
+
+    def cc(dd, f, n):
+        if not f or not f['covers']:
+            return ND
+        if n in dd:
+            return str(dd[n])
+        if (n == 'C5' and f is fs) or (n == 'C7' and f is fk):
+            return '—'
+        return 'нет'
+    for n, (nm, ds_) in CV.items():
+        rows.append([n + ' `' + nm + '`', ds_, cc(dk, fk, n), cc(ds, fs, n)])
     s.append(table(rows, [1.5, 3.2, 0.55, 0.55]))
+    s += box('Почему так: без BMC всей модели', [
+        'BMC всей модели (smtbmc / yices, затем abc bmc3) не дошёл до глубины 25–30 за часы: широкие счётчики и эталонные трекеры. '
+        'Доказательства abc pdr не ограничены глубиной и покрывают любую; а 8 достигнутых cover показывают, что допущения среды '
+        'выполнимы (пустое, вакуумное доказательство исключено).'])
     # mutants
     s.append(P('<b>Мутанты.</b> Намеренно испорченные варианты модели; каждый, применимый к конфигурации, должен дать контрпример '
-               '(BMC глубины 60, `rstCycles` = 16). В таблице — какие свойства нарушены и на каком такте; «—» — мутант к этой '
+               '(abc bmc3 глубины 60, лимит 300 с; не пойманные — abc pdr, помечены «pdr»). В таблице — какие свойства нарушены и на каком такте; «—» — мутант к этой '
                'конфигурации не применяется.'))
     allm = []
     for f in (fk, fs):
@@ -263,7 +279,8 @@ def section72(C):
             if n not in d:
                 return '—'
             m = d[n]
-            return '%s%s (такт %d)' % ('' if m[1] == 'FAIL' else 'НЕ ЛОМАЕТ: ', ', '.join(x.split('_')[0] for x in m[3]) or '?', m[2])
+            return '%s%s, такт %d%s' % ('' if m[1] == 'FAIL' else 'НЕ ЛОМАЕТ: ', ', '.join(x.split('_')[0] for x in m[3]) or '?', m[2],
+                                         ' (pdr)' if m[4] == 'pdr' else '')
         for n in allm:
             rows.append(['`%s`' % n, desc(n), cell(dk, n, fk), cell(ds, n, fs)])
         s.append(table(rows, [1.7, 2.3, 1.1, 1.1]))
@@ -452,6 +469,11 @@ def section73(C):
         '<b>(д)</b> Триггер случая 5 сценария 6 в SWEEP не попадал в последний такт sFlush — добавлено условие пустоты (`u_dc.idle`).',
         '<b>(е)</b> Конфигурация XSNoCTop из `Default.yml` (`tp: true`) ломает elaboration независимо от сброса — взяты YAML только с '
         'ключами сброса.',
+        '<b>(ж) Формальная часть:</b> пока `l1.alive` в окружении поднимался не позже чем через 3 такта после сброса, frontend (позже на '
+        '2 такта) всегда выходил из сброса после `alive` и такта sRelease → sIdle, поэтому мутант `CTRL_MUTANT_NO_ALIVE` был '
+        'доказуем: немой мутант означал, что окружение сильнее, чем гарантирует дизайн (`alive` DCache не упорядочен относительно '
+        'сброса frontend). Граница ослаблена до 6 тактов, мутант пойман свойством P7 на такте 26 (pdr). В симуляции он остаётся '
+        '`+EQUIV`: в реальном RTL frontend последний в цепочке ResetGen, ожидание его выхода покрывает `alive`.',
         'Кроме того, стенд дал ошибку, найденную длинным прогоном: ожидание тишины в сценарии 6 не учитывало MainPipe, и эталон строки B '
         'запоминался, пока store в s3 ждал BtoT-апгрейда; исправление — ждать `dc_busy_true` и буферы B и C.',
     ], 'warn')
