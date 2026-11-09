@@ -8,7 +8,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 VER=$(cd "$HERE/.." && pwd)
 ELAB=${1:-/home/user/XiangShan/build/core_reset_elab}
 DEPTH=${DEPTH:-30}
-. "$VER/scripts/env.sh"
+set +u; . "$VER/scripts/env.sh"; set -u
 
 need_extract=0
 for f in CoreResetCtrl_keep CoreResetCtrl_sweep TLQuiesceGate TLQuiesceGate_1 TLResetIsolation; do
