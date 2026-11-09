@@ -21,6 +21,11 @@
 | 09.11.2026 | исправление ревью: теги L1D на сбросе тайла (KEEP); компиляция OK, ревью исправления OK | a43a292 |
 | 09.11.2026 | регрессия, проход 1: дизайн 160/160 PASS; исправлены определения мутантов и модель DCache | 29b5e69 |
 | 09.11.2026 | elaboration XSNoCTop: YAML только с ключами core-reset (Default.yml с tp: true не подходит XSNoCTop) | fafbe3b |
+| 09.11.2026 | полная elaboration XSNoCTop KEEP и SWEEP PASS (firtool отдельно: JVM + firtool > 16 ГБ) | ad4316f |
+| 09.11.2026 | формальная часть: без BMC всей модели (не доходит до глубины 25–30), cover через abc pdr, мутанты abc bmc3 60 / 300 с → pdr | 7382a15 |
+| 09.11.2026 | немой мутант NO_ALIVE (формально): допущение `alive` ≤ 3 такта сильнее дизайна → ≤ 6 тактов | 652cdfb |
+| 10.11.2026 | формальная часть k и s: 0 неожиданных (prove 100/16 PASS, cover 8/8, все мутанты пойманы) | c446f99 |
+| 10.11.2026 | `check.sh --quick/--full`, `scripts/mill_retry.sh`, режим `QUICK=1` в run_formal.sh | c446f99 |
 
 Ревью Chisel v5 (Sonnet, 09.11.2026):
 - **critical, унаследовано от v4, KEEP:** `TagSRAMBank.rst_cnt` (домен сброса ядра) обнуляет SRAM тегов при каждом
@@ -110,8 +115,11 @@
 ### 5. Проверки
 - Одна точка входа `core-reset/verification/check.sh --quick | --full`:
   `--quick` — `mill xiangshan.compile`, elaboration модулей, smoke (сценарии 1, 2, 3, 5, 6, 7 × KEEP/SWEEP),
-  formal BMC; `--full` — плюс prove (`rstCycles` 100 и 16), cover, мутанты, эквивалентность Chisel ↔ модели,
-  регрессия, soak, полная elaboration XSNoCTop (KEEP и SWEEP).
+  formal prove `rstCycles` 16 (`QUICK=1`; BMC всей модели не сходится — заменён доказательствами); `--full` — плюс
+  prove (`rstCycles` 100 и 16), cover, мутанты, эквивалентность Chisel ↔ модели, регрессия, soak, полная
+  elaboration XSNoCTop (KEEP и SWEEP). Опции: `--skip-elab-noc`, `--write-results` (иначе вывод в
+  `verification/build/check/`), `--dirty`. Отказ (код 2), если `src/` или `verification/` не закоммичены или
+  HEAD не запушен.
 - У каждой функции v5 — направленная проверка и мутант:
 
   | Функция | Свойство / сценарий | Мутант |
