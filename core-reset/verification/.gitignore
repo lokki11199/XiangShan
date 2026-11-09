@@ -1,0 +1,5 @@
+build/
+*.vcd
+formal/*/
+!formal/*.sv
+!formal/*.sh
