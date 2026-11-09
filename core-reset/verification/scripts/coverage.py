@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Adds up the coverage lines of results_soak.log (cr_txmon, cr_probe_sb, triggers, directed Probes)."""
+"""Adds up the coverage lines of results_soak_<cfg>.log (cr_txmon, cr_probe_sb, drain, triggers, directed Probes)."""
 import re, sys, json
 log = sys.argv[1] if len(sys.argv) > 1 else 'results_soak.log'
 tot = {}
@@ -9,8 +9,8 @@ for line in open(log):
     line = line.strip()
     if line.startswith('###'): runs += 1; continue
     if line.startswith('final:'):
-        for k in ['resets', 'holds', 'reset-points', 'dcache-ops', 'ul-ops', 'icachectrl-ops', 'probes', 'spurious-probes',
-                  'acquire-perm', 'releases-during-quiesce', 'lines-kept', 'probes-held-in-reset',
+        for k in ['resets', 'reset-points', 'dcache-ops', 'ul-ops', 'icachectrl-ops', 'probes', 'spurious-probes',
+                  'snoops-served-by-L2-alone', 'acquire-perm', 'releases-during-quiesce', 'lines-kept', 'probes-held',
                   'probes-answered-by-gate', 'errors']:
             m = re.search(r'\b' + k + r'=(\d+)', line); add('final.' + k, m.group(1))
         m = re.search(r'releases-during-quiesce=\d+ \(with data (\d+)\)', line); add('final.releases-with-data', m.group(1))
@@ -41,6 +41,16 @@ for line in open(log):
         for c, v in re.findall(r'C(\d+)=(\d+)', line): add('trig_hit.C' + c, v)
     elif line.startswith('triggers missed:'):
         for c, v in re.findall(r'C(\d+)=(\d+)', line): add('trig_miss.C' + c, v)
+    elif line.startswith('drain:'):
+        for k, v in re.findall(r'([\w-]+)=(\d+)', line):
+            if k == 'longest-sDrain': tot['drain.' + k] = max(tot.get('drain.' + k, 0), int(v))
+            else: add('drain.' + k, v)
+    elif line.startswith('directed: start-of-sFlush'):
+        m = re.search(r'offered-in-sFlush=(\d+) later=(\d+)', line); add('dir.flush_start.offered', m.group(1)); add('dir.flush_start.later', m.group(2))
+    elif line.startswith('directed: first-cycle-of-sDrain'):
+        m = re.search(r'offered-in-sDrain=(\d+) transition-later=(\d+)', line); add('dir.drain_first_cycle.offered', m.group(1)); add('dir.drain_first_cycle.later', m.group(2))
+    elif line.startswith('directed: last-cycle-of-sFlush'):
+        m = re.search(r'offered-in-sFlush=(\d+) later=(\d+)', line); add('dir.flush_last_cycle.offered', m.group(1)); add('dir.flush_last_cycle.later', m.group(2))
     elif line.startswith('directed:'):
         m = re.search(r'stale before the Probe=(\d+), skipped=(\d+), swept-lines-probed=(\d+) \(of them dirty before the sweep (\d+)\)', line)
         add('dir.dirty_l2_stale', m.group(1)); add('dir.skipped', m.group(2)); add('dir.swept_probed', m.group(3)); add('dir.swept_dirty', m.group(4))
