@@ -55,10 +55,11 @@ for C in "" CFG_SWEEP; do
   case "$C" in "") ND=2 ;; *) ND=6 ;; esac
   mut "$C" CTRL_MUTANT_NO_DRAIN $ND
   mut "$C" CTRL_MUTANT_NO_DRAIN+NO_CTRL_ASSERT $ND
-  mut "$C" FLUSH_MUTANT_NO_BLOCK 2
-  mut "$C" FLUSH_MUTANT_NO_BLOCK+NO_CTRL_ASSERT 2
   # alive (DCache) and frontend reset waited for in sRelease
-  mut "$C" CTRL_MUTANT_NO_ALIVE 5
+  # NO_ALIVE is expected equivalent: in XSTile the frontend is the last of the ResetGen chain, after the DCache, so
+  # waiting for the frontend (core_in_reset) also covers alive; the formal proof catches it (P7) because its
+  # environment allows any order
+  EQ="+EQUIV"; mut "$C" CTRL_MUTANT_NO_ALIVE 5; EQ=""
   mut "$C" CTRL_MUTANT_NO_FE_WAIT 2
   # Probes held / answered until the end of sRelease
   mut "$C" CTRL_MUTANT_NO_HOLD_IN_RELEASE+NO_CTRL_ASSERT 6
@@ -71,11 +72,17 @@ for C in "" CFG_SWEEP; do
   mut "$C" CTRL_MUTANT_STALE_QUIET 6
   mut "$C" CTRL_MUTANT_LATE_HOLDB 6
   mut "$C" CTRL_MUTANT_NO_EARLY_BLOCK "2 5"
-  mut "$C" CTRL_MUTANT_NO_EARLY_QUIET "2 5"
+  # NO_EARLY_QUIET: in the sweep the sweep lasts longer than any Get, so on SCEN 5 the early gates are quiet anyway
+  case "$C" in "") NEQ="2 5" ;; *) NEQ=2 ;; esac
+  mut "$C" CTRL_MUTANT_NO_EARLY_QUIET "$NEQ"
   mut "$C" CTRL_MUTANT_RESET_EARLY "3 7"
   # rare in simulation: these seeds hit them (scripts/seedsearch.sh)
   rare "$C" GATE_MUTANT_CUT_A+NO_CTRL_ASSERT
   rare "$C" FLUSH_MUTANT_NO_WBQ_WAIT+NO_CTRL_ASSERT
+  # NO_BLOCK is rare in v5: a store that slips through only matters if it enters MainPipe in the very cycle of the
+  # reset decision (the emptiness flags cover MainPipe), so simulation hits it only with some seeds
+  rare "$C" FLUSH_MUTANT_NO_BLOCK
+  rare "$C" FLUSH_MUTANT_NO_BLOCK+NO_CTRL_ASSERT
   # expected equivalent: the DCache idle flag is redundant with done + the gates' quiet
   EQ="+EQUIV"; mut "$C" CTRL_MUTANT_NO_L1_IDLE "2 6"; EQ=""
 done
@@ -84,12 +91,15 @@ mut "" GATE_MUTANT_NO_HOLDB "2 6"
 mut "" META_MUTANT_CORE_RESET 2
 mut "" META_MUTANT_CORE_RESET+NO_FREEZE_CHECK "2 6 7"
 mut "" FREEZE_MUTANT_NO_SRAM_MASK "2 6"
+mut "" TAG_MUTANT_CORE_RESET "2 6"
 rare "" FLUSH_MUTANT_NO_MP_WAIT
 # sweep: every line released (with its data, all ways, the last ReleaseAck waited for); the gate answers NtoN
-for M in FLUSH_MUTANT_NO_SWEEP FLUSH_MUTANT_SWEEP_NO_DATA FLUSH_MUTANT_SWEEP_ONE_WAY GATE_MUTANT_NO_ACKB CTRL_MUTANT_NOKEEP_HOLDB NOKEEP_MUTANT_META_KEPT; do
+for M in FLUSH_MUTANT_NO_SWEEP FLUSH_MUTANT_SWEEP_NO_DATA FLUSH_MUTANT_SWEEP_ONE_WAY GATE_MUTANT_NO_ACKB CTRL_MUTANT_NOKEEP_HOLDB; do
   mut CFG_SWEEP $M 2
 done
 mut CFG_SWEEP FLUSH_MUTANT_NO_SWEEP 6
+# expected equivalent: after the sweep every line is invalid, so a meta array that survives the reset holds only N
+EQ="+EQUIV"; mut CFG_SWEEP NOKEEP_MUTANT_META_KEPT 2; EQ=""
 mut CFG_SWEEP FLUSH_MUTANT_SWEEP_NO_WAIT 2
 mut CFG_SWEEP FLUSH_MUTANT_SWEEP_NO_WAIT+NO_CTRL_ASSERT 5
 mut CFG_SWEEP GATE_MUTANT_ACK_PARAM 5

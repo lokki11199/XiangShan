@@ -25,7 +25,8 @@
 // Simplified TileLink: see cr_env_models.sv.
 // Mutants: FLUSH_MUTANT_NO_BLOCK, FLUSH_MUTANT_NO_WBQ_WAIT, FLUSH_MUTANT_NO_MP_WAIT, FLUSH_MUTANT_NO_SWEEP,
 //   FLUSH_MUTANT_SWEEP_NO_WAIT, FLUSH_MUTANT_SWEEP_NO_DATA, FLUSH_MUTANT_SWEEP_ONE_WAY, META_MUTANT_CORE_RESET,
-//   NOKEEP_MUTANT_META_KEPT, FREEZE_MUTANT_NO_SRAM_MASK.
+//   NOKEEP_MUTANT_META_KEPT, FREEZE_MUTANT_NO_SRAM_MASK,
+//   TAG_MUTANT_CORE_RESET (KEEP: the tag array is cleared on the core reset, the meta keeps the lines).
 // ============================================================================
 module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEEP = 1, parameter bit GARBAGE = 1) (
   input  logic clk, rst,                 // rst = core reset
@@ -262,6 +263,9 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
         tg[gr2[10:9] % NS][gr2[11] % NW] <= gr2[13:12]; dat[gr2[10:9] % NS][gr2[11] % NW] <= gr;
       end
 `endif
+`ifdef TAG_MUTANT_CORE_RESET
+      if (KEEP) for (int s = 0; s < NS; s++) for (int w = 0; w < NW; w++) tg[s][w] <= 2'd0;   // KEEP mutant: tag init counter on the core reset
+`endif
       if (garb && gr2[14] && !freeze && KEEP) st[gr2[16:15] % NS][gr2[17] % NW] <= gr2[19:18];
       mq_v <= 1'b0; mq_sent <= 1'b0; mq_gotd <= 1'b0; mq_dbeat <= 1'b0; mq_perm <= 1'b0;
       for (int i = 0; i < 2; i++) begin wb_v[i] <= 1'b0; wb_sent[i] <= 1'b0; end
@@ -346,8 +350,9 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
               st[a3[1:0]][w] <= D; dat[a3[1:0]][w] <= mval[3];
               gold_we <= 1'b1; gold_addr <= a3; gold_data <= mval[3]; n_ops <= n_ops + 1;
             end else if (w >= 0) begin
-              // BtoT upgrade: the B copy stays valid until the refill (a Probe meanwhile is answered BtoN)
-              if (!mq_v && !wb_conflict(a3)) begin
+              // BtoT upgrade: the B copy stays valid until the refill (a Probe meanwhile is answered BtoN);
+              // a miss request from MainPipe is blocked by flushBlock (DCacheWrapper: missQueue.io.req.valid := false)
+              if (!mq_v && !block && !wb_conflict(a3)) begin
                 mq_v <= 1'b1; mq_sent <= 1'b0; mq_addr <= a3; mq_store <= 1'b1; mq_val <= mval[3]; mq_way <= WB'(w);
                 mq_grow <= 2'd2; mq_perm <= 1'b0;
               end

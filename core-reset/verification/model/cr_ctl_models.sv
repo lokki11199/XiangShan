@@ -257,10 +257,11 @@ module cr_ctrl #(parameter bit KEEP = 1, parameter int RST_CYCLES = 100) (
 `else
   wire flush_end = l1_done_m && early_quiet;
 `endif
-  // quiet of this cycle; the mutant uses the registered value of the previous cycle
+  // quiet of this cycle; the mutant decides on the quiet of the PREVIOUS cycle, also in the first cycle of sDrain
+  // (a Probe taken by the gate in the last cycle of sFlush then slips through)
   logic gq_q; always_ff @(posedge clk) gq_q <= gates_quiet;
 `ifdef CTRL_MUTANT_STALE_QUIET
-  wire gq = gq_q && state == S_DRAIN && cnt != 0;
+  wire gq = gq_q;
 `else
   wire gq = gates_quiet;
 `endif
@@ -275,7 +276,6 @@ module cr_ctrl #(parameter bit KEEP = 1, parameter int RST_CYCLES = 100) (
       S_IDLE:    begin cnt <= '0; if (req) state <= S_FLUSH; end
       S_FLUSH:   if (flush_end) begin state <= S_DRAIN; cnt <= '0; end
       S_DRAIN:   begin
-        if (cnt != 8'hff) cnt <= cnt + 1'b1;     // cycles in sDrain (STALE_QUIET mutant only)
 `ifdef CTRL_MUTANT_NO_DRAIN
         begin state <= S_RESET; cnt <= '0; core_reset <= 1'b1; hir <= 1'b1; closed <= !ISO_LATE; end      // no wait at all
 `else
