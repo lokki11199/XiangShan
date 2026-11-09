@@ -10,7 +10,9 @@
 *
 * One option (SoCParameters.CoreResetKeepL1, with EnableCoreReset) chooses what happens to the lines of L1D:
 *   true : L1D keeps its lines across the core reset: their coherence state and error flags are on the
-*          tile reset (DCacheWrapper), tags and data are SRAMs (their writes are masked during the reset).
+*          tile reset (DCacheWrapper), as is the tag array (its initialisation counter would clear the tags
+*          on a core reset); the data SRAMs have no reset at all. Writes into tags and data are masked during
+*          the reset (freeze).
 *          L2's directory stays valid and L2 takes dirty data from the "hot" L1D with an ordinary Probe. A
 *          Probe offered while the core is in reset waits in L2 (channel B held in the gate) until the DCache
 *          is out of reset.
@@ -312,7 +314,11 @@ class CoreResetCtrl(keepL1: Boolean, rstCycles: Int = 100) extends Module {
     is (sDrain) {
       // channel A of L1D closed, B closed from the first cycle (holdProbe). The decision looks at quiet of this
       // cycle (the counters already include a Probe taken in the last cycle of sFlush), so nothing that
-      // crossed a gate before can be lost
+      // crossed a gate before can be lost.
+      // The emptiness flags do not cover the one registered write stage of the L1D data and meta arrays
+      // (BankedDataArray, AsynchronousMetaArray): a write of an s3 fire in the previous cycle is committed
+      // into the array at the edge that ends this cycle, the same edge at which coreReset rises, so it lands
+      // before the asynchronous reset assertion. No delay may be added between this decision and coreReset.
       when (io.gatesQuiet && l1Done && l1Idle) {
         state := sReset; cnt := 0.U; coreReset := true.B; hartInReset := true.B; closed := true.B
       }

@@ -8,8 +8,9 @@
 * the core is reset.
 * Two implementations (SoCParameters.CoreResetKeepL1, the Scala parameter sweep = !CoreResetKeepL1):
 *   keep  (sweep = false): L1D keeps its lines across the core reset: their coherence state (metaArray)
-*                          and error flags (errorArray) are flops on the tile reset (DCacheWrapper), tags and
-*                          data are SRAMs that are never reset.
+*                          and error flags (errorArray) are flops on the tile reset (DCacheWrapper), so is the
+*                          tag array (its initialisation counter would clear the tags on a core reset);
+*                          the data SRAMs have no reset at all.
 *   sweep (sweep = true) : every valid line is released to L2 first: a voluntary Release (clean line) or
 *                          ReleaseData (dirty line; a line obtained by AcquirePerm is always dirty), the
 *                          eviction path of MainPipe. L1D is empty afterwards, no data is lost, and L2's
@@ -92,7 +93,11 @@ class DCacheFlushUnit(sweep: Boolean)(implicit p: Parameters) extends DCacheModu
     }
     is (sDrain) {
       // a store or atomic accepted just before the block is still in MainPipe (mp_empty);
-      // a miss or a Release keeps its queue busy until its Grant / ReleaseAck (mq_empty, wbq_empty)
+      // a miss or a Release keeps its queue busy until its Grant / ReleaseAck (mq_empty, wbq_empty).
+      // idle does not cover the one registered write stage of the data and meta arrays (BankedDataArray,
+      // AsynchronousMetaArray): the write of an s3 fire in the previous cycle is committed at the edge that
+      // ends the cycle of the decision, the same edge at which coreReset rises (CoreResetCtrl), before the
+      // asynchronous reset assertion. No delay may be added between the decision and coreReset.
       when (!io.flush.req) {
         state := sIdle
       }.elsewhen (idle) {

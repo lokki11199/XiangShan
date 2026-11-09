@@ -148,7 +148,8 @@ case class SoCParameters
   // cycles), and no Probe reaches L1D meanwhile.
   EnableCoreReset: Boolean = false,
   // true : L1D keeps its lines across the core reset (coherence meta and error flags on the tile reset,
-  //        tag and data SRAMs not written meanwhile); L2 takes dirty data from the "hot" L1D with an
+  //        and the tag array, which has an initialisation counter, on the tile reset; the data SRAMs have no
+  //        reset; tag and data are not written meanwhile); L2 takes dirty data from the "hot" L1D with an
   //        ordinary Probe. A Probe offered while the core is in reset waits in L2 until the core is out of
   //        reset (and so does a snoop from the HN that needs it)
   // false: L1D is swept before the reset: every valid line is released to L2 (Release, or ReleaseData for
