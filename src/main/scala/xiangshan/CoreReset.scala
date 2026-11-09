@@ -316,7 +316,8 @@ class CoreResetCtrl(keepL1: Boolean, rstCycles: Int = 100) extends Module {
       // cycle (the counters already include a Probe taken in the last cycle of sFlush), so nothing that
       // crossed a gate before can be lost.
       // The emptiness flags do not cover the one registered write stage of the L1D data and meta arrays
-      // (BankedDataArray, AsynchronousMetaArray): a write of an s3 fire in the previous cycle is committed
+      // (BankedDataArray, AsynchronousMetaArray; the tag array is written combinationally in the s3 cycle,
+      // it has no registered stage): a write of an s3 fire in the previous cycle is committed
       // into the array at the edge that ends this cycle, the same edge at which coreReset rises, so it lands
       // before the asynchronous reset assertion. No delay may be added between this decision and coreReset.
       when (io.gatesQuiet && l1Done && l1Idle) {

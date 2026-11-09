@@ -95,7 +95,8 @@ class DCacheFlushUnit(sweep: Boolean)(implicit p: Parameters) extends DCacheModu
       // a store or atomic accepted just before the block is still in MainPipe (mp_empty);
       // a miss or a Release keeps its queue busy until its Grant / ReleaseAck (mq_empty, wbq_empty).
       // idle does not cover the one registered write stage of the data and meta arrays (BankedDataArray,
-      // AsynchronousMetaArray): the write of an s3 fire in the previous cycle is committed at the edge that
+      // AsynchronousMetaArray; the tag array is written combinationally in the s3 cycle, it has no registered
+      // stage): the write of an s3 fire in the previous cycle is committed at the edge that
       // ends the cycle of the decision, the same edge at which coreReset rises (CoreResetCtrl), before the
       // asynchronous reset assertion. No delay may be added between the decision and coreReset.
       when (!io.flush.req) {

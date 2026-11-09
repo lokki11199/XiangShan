@@ -1178,14 +1178,12 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   meta_write_ports.zip(metaArray.io.write).foreach { case (p, w) => w <> p }
 
   // Reset of XSCore alone that keeps L1D (EnableCoreReset, CoreResetKeepL1): the data SRAMs have no reset at
-  // all (shouldReset = false, no initialisation), the tag array is initialised only by the reset of its own
-  // domain, and the coherence state of every line (metaArray) and its error flags (errorArray) are flops.
-  // They take the tile reset instead of the core reset, so L1D still holds its lines after a core
-  // reset. While the core reset is asserted or released (freeze) nothing may be written into them.
+  // all (shouldReset = false, no initialisation). The tag array (its TagSRAMBank initialisation counter rst_cnt
+  // would write zeros into every set), the coherence meta array and the error flag array take the tile reset
+  // instead of the core reset, so L1D still holds its lines after a core reset. Writes into tags, meta, error
+  // flags and data are masked by freeze while the core reset is asserted or released.
   // Without CoreResetKeepL1 they stay on the core reset (as upstream): the flush unit has released every line
   // before (sweep), L1D starts empty after a core reset.
-  // The tag array is a SRAM, but its wrapper (TagSRAMBank) has a reset counter (rst_cnt) that writes zeros into
-  // every set after reset, so it takes the tile reset as well (otherwise every core reset would clear the tags).
   io.metaReset.foreach { r =>
     metaArray.reset := r
     errorArray.reset := r
