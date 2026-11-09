@@ -4,3 +4,8 @@ formal/*/
 !formal/*.sv
 !formal/*.sh
 formal/*.sby
+# working files of the run scripts (kept locally, not part of the results)
+*.out
+*.before
+*.resume
+ALLDONE
