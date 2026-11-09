@@ -3,3 +3,28 @@ tools: Yosys 0.70 , abc pdr, smtbmc yices
 design prove rstCycles=100 (abc pdr, unbounded): PASS  (112.72 sec)
 design prove rstCycles=16 (abc pdr, unbounded): PASS  (7.13 sec)
 design      bmc: not run (the unbounded proofs with abc pdr cover every depth; the assumptions are shown satisfiable by the covers reached)
+design      cover (as assert, abc pdr; step = length of the trace found by pdr, not necessarily the shortest): PASS (8 reached: C1 step 9, C2 step 8, C3 step 27, C4 step 26, C6 step 51, C7 step 27, C8 step 27, C9 step 27,)
+CTRL_MUTANT_NO_DRAIN             bmc : FAIL at cycle 4  P19_reset_point_after_done_idle 
+CTRL_MUTANT_STALE_QUIET          bmc : FAIL at cycle 4  P1_reset_point_clean 
+CTRL_MUTANT_NO_L1_IDLE           bmc : FAIL at cycle 4  P19_reset_point_after_done_idle 
+CTRL_MUTANT_NO_ALIVE             bmc : FAIL at cycle 26  P7_no_probe_before_alive 
+CTRL_MUTANT_NO_FE_WAIT           bmc : FAIL at cycle 24  P20_run_only_after_frontend 
+CTRL_MUTANT_NO_EARLY_QUIET       bmc : FAIL at cycle 3  P10_noncoherent_quiet_in_drain 
+CTRL_MUTANT_NO_EARLY_BLOCK       bmc : FAIL at cycle 2  P9_no_new_noncoherent 
+CTRL_MUTANT_LATE_HOLDB           bmc : FAIL at cycle 3  P18_b_held_from_first_drain_cycle 
+CTRL_MUTANT_NO_HOLD_IN_RELEASE   bmc : FAIL at cycle 21  P15_isolation_core_side P17_b_closed_when_isolated P3_no_probe_to_reset P7_no_probe_before_alive 
+CTRL_MUTANT_RESET_EARLY          bmc : FAIL at cycle 21  P13_reset_until_req_drops 
+CTRL_MUTANT_ISO_LATE             bmc : FAIL at cycle 4  P16_isolation_covers_reset 
+CTRL_MUTANT_ISO_EARLY_DROP       bmc : FAIL at cycle 21  P16_isolation_covers_reset 
+GATE_MUTANT_ALWAYS_QUIET         bmc : FAIL at cycle 2  P5_quiet_is_sound 
+GATE_MUTANT_CUT_A                bmc : FAIL at cycle 2  P4_a_message_not_cut 
+GATE_MUTANT_NO_ISO_C             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ISO_D             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ISO_E             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+ISO_MUTANT_NO_ISO                bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ACKB              bmc : FAIL at cycle 4  P15_isolation_core_side P3_no_probe_to_reset P7_no_probe_before_alive P8N_taken_at_once 
+GATE_MUTANT_ACK_PARAM            bmc : FAIL at cycle 5  P12_ack_is_NtoN 
+CTRL_MUTANT_NOKEEP_HOLDB         bmc : FAIL at cycle 4  P8N_held_only_in_drain 
+GATE_MUTANT_NO_ISO_A             prove: PASS (equivalent mutant, expected PASS)
+ISO_MUTANT_ALWAYS_QUIET          prove: PASS (equivalent mutant, expected PASS)
+formal: 0 unexpected result(s)

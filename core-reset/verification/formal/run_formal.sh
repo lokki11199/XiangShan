@@ -18,6 +18,7 @@
 # finish) and the covers show that the assumptions are satisfiable.
 # Needs SymbiYosys (sby), yosys, yosys-abc and an SMT solver for yosys-smtbmc: tools from ../scripts/env.sh
 # (OSS_CAD_SUITE or /opt/eda). Solver: SMT_SOLVER (default yices if installed, else boolector, else z3).
+# QUICK=1: only the prove with rstCycles = 16 of each configuration (no prove 100, covers, mutants, EQUIV).
 # Exit code = number of unexpected results.
 cd "$(dirname "$0")"
 . ../scripts/env.sh
@@ -67,12 +68,13 @@ CFGS=${*:-k s}
 for c in $CFGS; do
   D=$(cfgdefs $c)
   echo "=== configuration $c: $(cfgname $c)${D:+ (-D $D)}"
-  for R in 100 16; do
+  for R in $([ -n "$QUICK" ] && echo 16 || echo 100 16); do
     RD=$D; [ $R = 16 ] && RD="$D RST16"
     mk ${c}_prove$R "$RD" prove; sby -f ${c}_prove$R.sby >/dev/null 2>&1; r=$(res ${c}_prove$R)
     echo "design prove rstCycles=$R (abc pdr, unbounded): $r  ($(grep -o "Time = *[0-9.]* sec" ${c}_prove$R/logfile.txt | tail -1 | sed "s/Time = *//"))"; [ "$r" = PASS ] || fails=$((fails+1))
   done
   D16="$D RST16"
+  [ -n "$QUICK" ] && continue
   echo "design      bmc: not run (the unbounded proofs with abc pdr cover every depth; the assumptions are shown satisfiable by the covers reached)"
   if [ "${COVER_ENGINE:-assert}" = assert ]; then
     # covers as assertions (abc pdr): FAIL = the cover is reached
