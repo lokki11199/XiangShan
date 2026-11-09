@@ -1,0 +1,26 @@
+Chisel compile and elaboration of the core-only reset v5 (XiangShan kunminghu-v2, branch core-reset-v5)
+
+compile: mill -i xiangshan.compile: PASS (no errors; no warnings in the changed files)
+
+module elaboration (verification/elab/CoreResetElabHarness.scala, xiangshan.CoreResetElab):
+  ctrl_keep  CoreResetCtrl(keepL1 = true):  PASS
+  ctrl_sweep CoreResetCtrl(keepL1 = false): PASS
+  gates      TLQuiesceGate l1d (TL-C, early = false), TLQuiesceGate l1i (TL-UL, early = true), TLResetIsolation: PASS
+  (their RTL is in verification/rtl/, compared with the models: results_equiv.txt)
+
+full elaboration XSNoCTop (top.TopMain, CONFIG=XSNoCTopConfig, make verilog arguments, YAML verification/elab/xsnoctop_*.yml):
+  KEEP  (EnableCoreReset, CoreResetKeepL1 = true):  PASS  (src identical to the branch HEAD; Chisel 4:45, firtool 5:57; 1740 files)
+  SWEEP (EnableCoreReset, CoreResetKeepL1 = false): PASS  (src identical to the branch HEAD; Chisel 5:34, firtool 5:51; 1740 files)
+  memory: the Chisel elaboration JVM peaks at ~8.1 GB, firtool at ~8.5 GB; together they exceed the 16 GB of the
+  build machine (OOM of the JVM while firtool runs), so firtool was run on the generated XSTop.fir with the same
+  options after the JVM ended. A machine with more memory runs plain `make verilog`.
+  checks on the generated RTL (both configurations):
+    top XSTop has the ports io_debug_reset, io_core_reset_req, io_core_reset_busy
+    XSTile instantiates CoreResetCtrl, TLResetIsolation and five TLQuiesceGate (l1d, l1i, ptw, i_mmio, d_mmio)
+    DCache instantiates DCacheFlushUnit
+    CoreResetCtrl KEEP vs SWEEP differ as specified (KEEP: io_l1_freeze = closed, holdProbe = sDrain | closed;
+      SWEEP: ackProbe = closed, holdProbe = sDrain)
+    KEEP: DuplicatedTagArray tagArray, L1CohMetaArray metaArray and L1ErrorMetaArray errorArray of the DCache all
+      take io_metaReset (the ResetGen of the tile reset in XSTile), not the core reset of CoreResetCtrl
+  the configuration without YAML (EnableCoreReset = false) was not regenerated; the YAML base Default.yml was not used
+  (it enables the L2 TP-meta port, tp: true, which XSNoCTop does not connect: elaboration fails independently of this work)
