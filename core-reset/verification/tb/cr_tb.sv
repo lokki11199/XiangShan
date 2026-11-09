@@ -21,7 +21,7 @@
 //   +SCEN=3  request of random length (2..2000 cycles: the core is held in reset), x4
 //   +SCEN=4  naive core reset without the sequence (reproduces the problem; errors expected)
 //   +SCEN=5  directed: the procedure starts exactly while a transaction of class C1..C12 is in flight
-//            (cr_txmon classes C1..C10, C11 MSHR with an unsent Acquire, C12 Probe offered, not accepted)
+//            (cr_txmon classes C1..C10, C11 MSHR with an unsent Acquire, C12 Probe offered in this cycle)
 //   +SCEN=6  directed Probes of L1D lines (dirty / clean T / B, toN / toB), six cases: 0 offered in sReset,
 //            1 in sRelease, 2 right after the sequence, 3 at the start of sFlush, 4 in the first cycle of sDrain,
 //            5 in the last cycle of sFlush (taken by the gate, sDrain waits for its ProbeAck)
@@ -271,7 +271,7 @@ module cr_tb;
     trig_cond = 1'b0;
     if (trig_sel >= 1 && trig_sel <= 10) trig_cond = mon_open[trig_sel - 1];
     else if (trig_sel == 11) trig_cond = u_dc.mq_v && !u_dc.mq_sent;   // MSHR allocated, Acquire not sent yet
-    else if (trig_sel == 12) trig_cond = lb_v && !lb_r;                // L2 offers a Probe, not accepted yet
+    else if (trig_sel == 12) trig_cond = lb_v;                         // L2 offers a Probe in this cycle (it is accepted in the last cycle of sIdle: the DCache answers it in sFlush)
   end
   // directed snoops started by a trigger (SCEN=6): 3 the request is raised now (the Probe is offered in the first
   // cycle of sFlush), 4 the controller leaves sFlush now (offered in the first cycle of sDrain), 5 the DCache is
