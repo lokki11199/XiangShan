@@ -101,8 +101,10 @@
   `origin core-reset-v5`).
 - Не коммитить: `.mill-jvm-opts`, `out/`, `build/`, стенд elaboration в `src/` (его место —
   `core-reset/verification/elab/`). Подмодули не менять.
-- `core-reset.patch` = `git diff c098f99 --ignore-submodules -- src/` (изменяемые файлы в c098f99 и 7b16188
-  совпадают, патч годится для обеих).
+- `core-reset.patch` = `git diff 7b16188 HEAD --ignore-submodules -- src/` (16 файлов; ветка основана на
+  7b16188). Эти 16 файлов в c098f99 и 7b16188 совпадают, поэтому патч применяется к обеим ревизиям. **Не**
+  `git diff c098f99 HEAD`: туда попадают изменения пяти upstream-коммитов после c098f99 (ошибка правила,
+  исправлена 09.11.2026; на ней ошибся первый сбор пакета).
 - Коммиты: английский, стиль XiangShan, в конце `Co-Authored-By` и `Claude-Session`.
 
 ### 5. Проверки
