@@ -1,0 +1,6 @@
+design runs: 160, PASS 160
+  KEEP       design  80 PASS  80 | naive  3 reproduced  3 | mutant runs 110 caught 110 | +EQUIV  9 PASS  9
+  CFG_SWEEP  design  80 PASS  80 | naive  3 reproduced  3 | mutant runs 101 caught 101 | +EQUIV 18 PASS 18
+naive reset: 6, problem reproduced 6
+mutant runs: 211, caught 211
++EQUIV runs: 27, PASS 27
