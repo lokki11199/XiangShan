@@ -132,6 +132,8 @@ class ProbeQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule w
     val pipe_req  = DecoupledIO(new MainPipeReq)
     val lrsc_locked_block = Input(Valid(UInt()))
     val update_resv_set = Input(Bool())
+    // no Probe in an entry or in the register in front of MainPipe (DCacheFlushUnit, core-only reset)
+    val empty = Output(Bool())
   })
 
   val pipe_req_arb = Module(new Arbiter(new MainPipeReq, cfg.nProbeEntries))
@@ -205,6 +207,7 @@ class ProbeQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModule w
   when(pipe_req_arb.io.out.fire){
     selected_req_valid := true.B
   }
+  io.empty := !Cat(entries.map(_.io.block_addr.valid)).orR && !selected_req_valid
 
   // print all input/output requests for debug purpose
   when (io.mem_probe.valid) {

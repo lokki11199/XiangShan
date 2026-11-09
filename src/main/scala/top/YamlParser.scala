@@ -62,7 +62,6 @@ case class YamlConfig(
   EnablePowerDown: Option[Boolean],
   EnableCoreReset: Option[Boolean],
   CoreResetKeepL1: Option[Boolean],
-  CoreResetLevel: Option[Boolean],
   XSTopPrefix: Option[String],
   EnableDFX: Option[Boolean],
   EnableSramCtl: Option[Boolean],
@@ -230,11 +229,6 @@ object YamlParser {
     yamlConfig.CoreResetKeepL1.foreach { keep =>
       newConfig = newConfig.alter((site, here, up) => {
         case SoCParamsKey => up(SoCParamsKey).copy(CoreResetKeepL1 = keep)
-      })
-    }
-    yamlConfig.CoreResetLevel.foreach { level =>
-      newConfig = newConfig.alter((site, here, up) => {
-        case SoCParamsKey => up(SoCParamsKey).copy(CoreResetLevel = level)
       })
     }
     yamlConfig.XSTopPrefix.foreach { prefix =>

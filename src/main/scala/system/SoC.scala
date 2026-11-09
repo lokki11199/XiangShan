@@ -144,22 +144,19 @@ case class SoCParameters
   EnablePowerDown: Boolean = false,
   // Reset of XSCore (core + L1) only, while L2 and the CHI port keep running (Debug Module ndmreset /
   // hartreset, or a cluster reset controller): L1 DCache is drained, the core<->L2 TileLink boundary is
-  // drained (see CoreReset.scala). The two options below choose the implementation.
+  // drained (see CoreReset.scala). XSCore stays in reset as long as the request is high (at least 100
+  // cycles), and no Probe reaches L1D meanwhile.
   EnableCoreReset: Boolean = false,
   // true : L1D keeps its lines across the core reset (coherence meta and error flags on the tile reset,
   //        tag and data SRAMs not written meanwhile); L2 takes dirty data from the "hot" L1D with an
-  //        ordinary Probe
+  //        ordinary Probe. A Probe offered while the core is in reset waits in L2 until the core is out of
+  //        reset (and so does a snoop from the HN that needs it)
   // false: L1D is swept before the reset: every valid line is released to L2 (Release, or ReleaseData for
   //        a dirty line, the eviction path of MainPipe), then L1D is reset with the core (meta and error
   //        flags on the core reset, as without EnableCoreReset). No data is lost, L2's directory lists no
-  //        L1D copy afterwards; the sweep takes about nSets * nWays cycles plus the ReleaseAcks
-  CoreResetKeepL1: Boolean = true,
-  // false: the core reset is a pulse; a request held longer (debugger) keeps the core out of reset but
-  //        stopped, the DCache answers Probes, and a second reset follows when the request drops
-  // true : XSCore stays in reset as long as the request is high, and no Probe reaches L1D meanwhile:
-  //        with CoreResetKeepL1 it waits in L2 until the core is out of reset (and so does a snoop from
-  //        the HN that needs it), without it the gate in front of L1D answers ProbeAck NtoN at once
-  CoreResetLevel: Boolean = false
+  //        L1D copy afterwards; the sweep takes about nSets * nWays cycles plus the ReleaseAcks. A Probe
+  //        offered while the core is in reset is answered by the gate in front of L1D (ProbeAck NtoN)
+  CoreResetKeepL1: Boolean = true
 ){
   require(
     !IMSICParams.HasTEEIMSIC || (IMSICParams.HasTEEIMSIC && IMSICBusType == device.IMSICBusType.AXI),
@@ -236,7 +233,6 @@ trait HasSoCParameter {
   val EnablePowerDown = soc.EnablePowerDown
   val EnableCoreReset = soc.EnableCoreReset
   val CoreResetKeepL1 = soc.CoreResetKeepL1
-  val CoreResetLevel = soc.CoreResetLevel
 
   def HasMEMencryption = cvm.HasMEMencryption
   require((cvm.HasMEMencryption && (cvm.KeyIDBits > 0)) || (!cvm.HasMEMencryption),

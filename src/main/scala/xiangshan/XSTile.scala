@@ -73,10 +73,12 @@ class XSTile()(implicit p: Parameters) extends LazyModule
   // One TLQuiesceGate on every TileLink edge from XSCore to L2Top: it can stop channel A, hold channel B
   // (Probes) or answer them itself (NtoN), isolates the core side while XSCore is in reset, and tells when
   // no transaction is outstanding across the core/L2 boundary (see CoreReset.scala).
+  // early: a non-coherent agent (TL-UL), its channel A is closed from the start of the sequence (sFlush);
+  // the coherent L1D keeps A open until sDrain (it releases lines and answers Probes in sFlush)
   val coreGates = scala.collection.mutable.ListBuffer[TLQuiesceGate]()
-  private def coreGate(name: String) = {
+  private def coreGate(name: String, early: Boolean) = {
     if (EnableCoreReset) {
-      val g = LazyModule(new TLQuiesceGate(name))
+      val g = LazyModule(new TLQuiesceGate(name, early))
       coreGates += g
       g.node
     } else {
@@ -98,14 +100,14 @@ class XSTile()(implicit p: Parameters) extends LazyModule
   // =========== Components' Connection ============
   // L1 to l1_xbar
   coreParams.dcacheParametersOpt.map { _ =>
-    l2top.inner.misc_l2_pmu := l2top.inner.l1d_logger := coreGate("l1d") := memBlock.dcache_port :=
+    l2top.inner.misc_l2_pmu := l2top.inner.l1d_logger := coreGate("l1d", early = false) := memBlock.dcache_port :=
       memBlock.l1d_to_l2_buffer.node := memBlock.dcache.clientNode
   }
 
-  l2top.inner.misc_l2_pmu := l2top.inner.l1i_logger := coreGate("l1i") := memBlock.frontendBridge.icache_node
+  l2top.inner.misc_l2_pmu := l2top.inner.l1i_logger := coreGate("l1i", early = true) := memBlock.frontendBridge.icache_node
   if (!coreParams.softPTW) {
     l2top.inner.misc_l2_pmu := l2top.inner.ptw_logger := l2top.inner.ptw_to_l2_buffer.node :=
-      coreGate("ptw") := memBlock.ptw_to_l2_buffer.node
+      coreGate("ptw", early = true) := memBlock.ptw_to_l2_buffer.node
   }
 
   // L2 Prefetch
@@ -139,14 +141,14 @@ class XSTile()(implicit p: Parameters) extends LazyModule
   }
 
   // mmio
-  l2top.inner.i_mmio_port := l2top.inner.i_mmio_buffer.node := coreGate("i_mmio") :=
+  l2top.inner.i_mmio_port := l2top.inner.i_mmio_buffer.node := coreGate("i_mmio", early = true) :=
     memBlock.frontendBridge.instr_uncache_node
   if (soc.EnableICacheCtrl) {
     // only the core itself reaches its ICache control registers (through its own MMIO path),
     // so this edge is drained together with the i_mmio / d_mmio gates; the core is the manager here
     memBlock.frontendBridge.icachectrl_node := coreIsolation() := l2top.inner.icachectrl_port_opt.get
   }
-  l2top.inner.d_mmio_port := coreGate("d_mmio") := memBlock.uncache_port
+  l2top.inner.d_mmio_port := coreGate("d_mmio", early = true) := memBlock.uncache_port
 
   // =========== IO Connection ============
   class XSTileImp(wrapper: LazyModule) extends LazyModuleImp(wrapper) {
@@ -174,11 +176,9 @@ class XSTile()(implicit p: Parameters) extends LazyModule
       val dft_reset = Option.when(hasMbist)(Input(new DFTResetSignals()))
       val l2_flush_en = Option.when(EnablePowerDown) (Output(Bool()))
       val l2_flush_done = Option.when(EnablePowerDown) (Output(Bool()))
-      // reset of XSCore alone, L2 and CHI keep running (EnableCoreReset, CoreResetKeepL1, CoreResetLevel;
-      // see CoreReset.scala).
+      // reset of XSCore alone, L2 and CHI keep running (EnableCoreReset, CoreResetKeepL1; see CoreReset.scala).
       // Both requests are levels, asynchronous (synchronised here) and start the same sequence; the core
-      // does not run while a request is high and starts from a fresh reset when it drops (it is held in
-      // reset all that time with CoreResetLevel).
+      // is held in reset while a request is high (at least 100 cycles) and starts when it drops.
       //   debug_reset    - from the Debug Module: ndmreset, and hartreset of this hart
       //   core_reset_req - from a reset controller of the cluster
       //   core_reset_busy - tile clock domain: high from the request until the core runs again
@@ -196,7 +196,7 @@ class XSTile()(implicit p: Parameters) extends LazyModule
     val core_soft_rst = core_reset_sink.in.head._1 // unused
 
     // core-only reset sequencer (tile clock and tile reset domain)
-    val coreResetCtrl = Option.when(EnableCoreReset)(Module(new CoreResetCtrl(CoreResetKeepL1, CoreResetLevel)))
+    val coreResetCtrl = Option.when(EnableCoreReset)(Module(new CoreResetCtrl(CoreResetKeepL1)))
     coreResetCtrl match {
       case Some(ctl) =>
         // asynchronous requests: 3-flop synchronisers, cleared by the tile reset
@@ -206,16 +206,19 @@ class XSTile()(implicit p: Parameters) extends LazyModule
         io.core_reset_busy.get := ctl.io.busy
         core.module.io.l1_quiesce <> ctl.io.l1
         coreGates.foreach { g =>
-          g.module.io.block := ctl.io.gateBlock
+          // channel A: non-coherent agents from sFlush, L1D from sDrain
+          g.module.io.block := (if (g.early) ctl.io.earlyBlock else ctl.io.gateBlock)
           g.module.io.holdB := ctl.io.holdProbe
           g.module.io.ackB := ctl.io.ackProbe
           g.module.io.isolate := ctl.io.isolate
         }
         coreIsolations.foreach(_.module.io.isolate := ctl.io.isolate)
-        ctl.io.gatesIdle := (coreGates.map(_.module.io.idle) ++ coreIsolations.map(_.module.io.idle))
+        ctl.io.earlyQuiet := coreGates.filter(_.early).map(_.module.io.quiet).foldLeft(true.B)(_ && _)
+        ctl.io.gatesQuiet := (coreGates.map(_.module.io.quiet) ++ coreIsolations.map(_.module.io.quiet))
           .foldLeft(true.B)(_ && _)
-        ctl.io.gatesQuiet := (coreGates.map(_.module.io.quiet) ++ coreIsolations.map(_.module.io.idle))
-          .foldLeft(true.B)(_ && _)
+        // the frontend is the last part of XSCore to leave reset (ResetGen chain memBlock -> backend ->
+        // frontend); CoreResetCtrl looks at it in sRelease only
+        ctl.io.coreInReset := core.module.io.resetInFrontend
       case None =>
         core.module.io.l1_quiesce.req := false.B
         core.module.io.l1_quiesce.freeze := false.B
@@ -283,7 +286,6 @@ class XSTile()(implicit p: Parameters) extends LazyModule
     // the reset of the frontend itself, 1 in reset (asserted asynchronously)
     l2top.module.io.hartIsInReset.resetInFrontend := isoReset(core.module.io.resetInFrontend, true.B)
     // for the Debug Module: a core-only reset keeps the hart "in reset" until the core runs again
-    // (pulse mode: with the request held the core itself is out of reset, but cannot run, see CoreResetCtrl)
     io.hartIsInReset := l2top.module.io.hartIsInReset.toTile ||
       coreResetCtrl.map(_.io.hartInReset).getOrElse(false.B)
     l2top.module.io.traceCoreInterface.fromCore <> core.module.io.traceCoreInterface

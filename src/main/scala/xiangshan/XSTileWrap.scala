@@ -102,12 +102,11 @@ class XSTileWrap()(implicit p: Parameters) extends LazyModule
       val l2_flush_en = Option.when(EnablePowerDown) (Output(Bool()))
       val l2_flush_done = Option.when(EnablePowerDown) (Output(Bool()))
       // reset of XSCore (core + L1) alone, L2 and CHI keep running (EnableCoreReset; L1D kept, or swept into
-      // L2 and reset with the core: CoreResetKeepL1; pulse or level: CoreResetLevel):
+      // L2 and reset with the core: CoreResetKeepL1):
       //   debug_reset    - level, asynchronous: Debug Module ndmreset / hartreset of this hart
       //   core_reset_req - level, asynchronous: reset controller of the cluster
       //   core_reset_busy - tile clock domain: high from the request until the core runs again
-      // The core does not run while a request is high and starts from a fresh reset when it drops
-      // (with CoreResetLevel it is held in reset all that time).
+      // XSCore is held in reset while a request is high (at least 100 cycles) and starts when it drops.
       // With EnableCoreReset, hartResetReq (Debug Module hartreset) is a debug_reset too.
       val debug_reset = Option.when(EnableCoreReset) (Input(Bool()))
       val core_reset_req = Option.when(EnableCoreReset) (Input(Bool()))

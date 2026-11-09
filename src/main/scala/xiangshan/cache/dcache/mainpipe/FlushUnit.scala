@@ -4,7 +4,8 @@
 *
 * The core reset resets the control logic of the DCache (MainPipe, MissQueue, WritebackQueue, ProbeQueue),
 * so it must be idle at the reset point: no miss, no Release waiting for its ReleaseAck or half sent, no
-* store or atomic in MainPipe. The flush unit makes it so and keeps it so until the core is reset.
+* store, atomic or Probe in MainPipe or on its way there. The flush unit makes it so and keeps it so until
+* the core is reset.
 * Two implementations (SoCParameters.CoreResetKeepL1, the Scala parameter sweep = !CoreResetKeepL1):
 *   keep  (sweep = false): L1D keeps its lines across the core reset: their coherence state (metaArray)
 *                          and error flags (errorArray) are flops on the tile reset (DCacheWrapper), tags and
@@ -14,15 +15,23 @@
 *                          eviction path of MainPipe. L1D is empty afterwards, no data is lost, and L2's
 *                          directory records no L1D copy; then L1D is reset together with the core.
 *
+* Emptiness flags (idle): the exact state of every part of the control logic, no waiting time:
+*   mq_empty  : MissQueue - no miss entry in use, nothing in its enqueue register, no CMO in progress
+*   wbq_empty : WritebackQueue - no Release / ProbeAck in progress (a Release leaves only with its ReleaseAck)
+*   mp_empty  : MainPipe - nothing in s1, s2, s3 (a store or atomic accepted just before the block)
+*   pq_empty  : ProbeQueue - no Probe in an entry or in the register in front of MainPipe
+* A request entering MainPipe (s0 fire) leaves its queue in the same clock edge, so no request is ever
+* between two flags.
+*
 * Sequence (state machine below):
 *   sIdle  -- quiesce.req --> sDrain : block stores, atomics, CMOs and new misses (loads still read hits)
-*   sDrain -- MissQueue and WritebackQueue empty for 16 cycles (and in the cycle of the transition)
-*             --> sSweep (sweep) or sDone (keep)
+*   sDrain -- idle --> sSweep (sweep) or sDone (keep)
 *   sSweep : one MainPipe flush request per (set, way), way-major so consecutive requests hit different
 *            sets and are not stalled by the MainPipe set-conflict check; an invalid way ends in s3 at once
-*   sWait  -- no flush request in MainPipe, WritebackQueue empty (every Release got its ReleaseAck, every
-*             ProbeAck sent), MissQueue empty, for 16 cycles (and in the cycle of the transition) --> sDone
-*   sDone  : quiesce.done = 1, blocking is kept while quiesce.req is high
+*   sWait  -- no flush request in MainPipe and idle (every Release got its ReleaseAck, every ProbeAck sent)
+*             --> sDone
+*   sDone  : quiesce.done = 1, blocking is kept while quiesce.req is high; quiesce.idle tells whether a
+*            Probe is being served at the moment
 * L2 probes keep being served throughout (ProbeQueue -> MainPipe -> WritebackQueue); MainPipe gives them a
 * higher priority than the sweep, and a Probe that meets a Release of the same line waits for its
 * ReleaseAck exactly as with an ordinary eviction.
@@ -43,6 +52,9 @@ class L1QuiesceIO extends Bundle {
   val freeze = Output(Bool())
   // L1D has no miss, no release and no store in flight (and is empty with the sweep); high while req is high
   val done   = Input(Bool())
+  // the control logic of L1D is idle at this moment: the emptiness flags of all its queues and of MainPipe
+  // (with done high only a Probe can make it busy again)
+  val idle   = Input(Bool())
   // the DCache control logic is out of reset (0 while it is held in reset)
   val alive  = Input(Bool())
 }
@@ -54,6 +66,8 @@ class DCacheFlushUnit(sweep: Boolean)(implicit p: Parameters) extends DCacheModu
     val block     = Output(Bool())
     val mq_empty  = Input(Bool())
     val wbq_empty = Input(Bool())
+    val mp_empty  = Input(Bool())
+    val pq_empty  = Input(Bool())
     // to MainPipe (sweep): flush requests, and a pulse when one leaves s3
     val pipe_req  = DecoupledIO(new MainPipeReq)
     val pipe_resp = Input(Bool())
@@ -66,38 +80,29 @@ class DCacheFlushUnit(sweep: Boolean)(implicit p: Parameters) extends DCacheModu
   val way = RegInit(0.U(log2Up(nWays).W))
   // flush requests between MainPipe s0 fire and s3 fire (pipeline depth is 3)
   val inflight = RegInit(0.U(3.W))
-  // consecutive cycles of the wait condition, saturating
-  val quiet = RegInit(0.U(4.W))
 
   inflight := inflight + io.pipe_req.fire.asUInt - io.pipe_resp.asUInt
 
-  def countQuiet(cond: Bool): Unit = {
-    quiet := Mux(cond, Mux(quiet.andR, quiet, quiet + 1.U), 0.U)
-  }
-
-  val idle = io.mq_empty && io.wbq_empty
+  // the control logic of the DCache holds nothing (see the emptiness flags above)
+  val idle = io.mq_empty && io.wbq_empty && io.mp_empty && io.pq_empty
 
   switch (state) {
     is (sIdle) {
-      quiet := 0.U
       when (io.flush.req) { state := sDrain }
     }
     is (sDrain) {
-      // a store or atomic accepted just before the block is at most 3 cycles in MainPipe;
-      // a miss or a Release keeps its queue busy until its Grant / ReleaseAck
-      countQuiet(idle)
+      // a store or atomic accepted just before the block is still in MainPipe (mp_empty);
+      // a miss or a Release keeps its queue busy until its Grant / ReleaseAck (mq_empty, wbq_empty)
       when (!io.flush.req) {
         state := sIdle
-      }.elsewhen (quiet.andR && idle) {
+      }.elsewhen (idle) {
         state := (if (sweep) sSweep else sDone)
-        quiet := 0.U
         set := 0.U
         way := 0.U
       }
     }
     is (sSweep) {
       // CoreResetCtrl keeps quiesce.req high until l1.done, so the sweep always runs to its end
-      quiet := 0.U
       when (io.pipe_req.fire) {
         set := set + 1.U
         when (set === (nSets - 1).U) {
@@ -109,9 +114,7 @@ class DCacheFlushUnit(sweep: Boolean)(implicit p: Parameters) extends DCacheModu
     }
     is (sWait) {
       // the last flush requests leave MainPipe, the last Releases of the sweep get their ReleaseAck
-      val swept = inflight === 0.U && idle
-      countQuiet(swept)
-      when (quiet.andR && swept) { state := sDone }
+      when (inflight === 0.U && idle) { state := sDone }
     }
     is (sDone) {
       when (!io.flush.req) { state := sIdle }
@@ -123,6 +126,7 @@ class DCacheFlushUnit(sweep: Boolean)(implicit p: Parameters) extends DCacheModu
 
   io.block := state =/= sIdle
   io.flush.done := state === sDone
+  io.flush.idle := idle
 
   // 0 while the DCache is held in reset, 1 from the first cycle after it
   val alive = RegInit(false.B)

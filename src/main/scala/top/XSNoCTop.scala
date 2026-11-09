@@ -164,9 +164,9 @@ trait HasCoreLowPowerImp[+L <: HasXSTile] { this: BaseXSSocImp with HasXSTileCHI
       val debugIntr = withClockAndReset(clock, cpuReset_sync) {AsyncResetSynchronizerShiftReg(debug.head(0), 3, 0)}
       val msi_info_vld = withClockAndReset(clock, cpuReset_sync) {AsyncResetSynchronizerShiftReg(core_with_l2.module.io.msiInfo.valid, 3, 0)}
       val intSrc = Cat(msip, mtip, meip, seip, nmi_31, nmi_43, debugIntr, msi_info_vld)
-      // A core-only reset needs the Core+L2 clock (the drain runs on it, and Probes are served while the
-      // request is held: by the DCache, or by the gate in front of it): a request wakes the gated clock
-      // like a flit and keeps it from being gated again until the sequence is over.
+      // A core-only reset needs the Core+L2 clock (the drain runs on it, the reset is counted on it, and
+      // without CoreResetKeepL1 the gate in front of L1D answers Probes while the core is in reset): a request
+      // wakes the gated clock like a flit and keeps it from being gated again until the sequence is over.
       val coreResetReq = if (socParams.EnableCoreReset) {
         tileio.debug_reset.get || tileio.hartResetReq || tileio.core_reset_req.get
       } else false.B

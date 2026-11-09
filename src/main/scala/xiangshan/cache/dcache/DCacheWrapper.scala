@@ -1078,6 +1078,8 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   flushUnit.io.flush <> io.quiesce
   flushUnit.io.mq_empty := missQueue.io.empty
   flushUnit.io.wbq_empty := wb.io.empty
+  flushUnit.io.mp_empty := !mainPipe.io.busy
+  flushUnit.io.pq_empty := probeQueue.io.empty
   // sweep: flush requests through MainPipe (lowest priority, see MainPipe.flush_req)
   mainPipe.io.flush_req <> flushUnit.io.pipe_req
   flushUnit.io.pipe_resp := mainPipe.io.flush_resp

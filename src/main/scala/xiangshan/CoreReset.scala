@@ -8,9 +8,7 @@
 * So the boundary is drained first, nothing crosses it while the core is in reset, and every signal that
 * leaves the core reset domain is isolated on the tile side while the reset is asserted or released.
 *
-* Two independent options (SoCParameters, with EnableCoreReset):
-*
-* CoreResetKeepL1 (what happens to the lines of L1D)
+* One option (SoCParameters.CoreResetKeepL1, with EnableCoreReset) chooses what happens to the lines of L1D:
 *   true : L1D keeps its lines across the core reset: their coherence state and error flags are on the
 *          tile reset (DCacheWrapper), tags and data are SRAMs (their writes are masked during the reset).
 *          L2's directory stays valid and L2 takes dirty data from the "hot" L1D with an ordinary Probe. A
@@ -23,37 +21,30 @@
 *          the empty L1D (CoupledL2 does not even send one: its directory lists no L1D copy).
 *   Either way only the control logic of the DCache matters at the reset point: it must be idle.
 *
-* CoreResetLevel (how long the core stays in reset)
-*   false: a pulse of rstCycles. A request held longer (a debugger holding ndmreset / hartreset) keeps
-*          the core out of reset but stopped (sHold), the DCache answers Probes, and a second reset follows
-*          when the request drops. With CoreResetKeepL1 a Probe never waits longer than one reset pulse.
-*   true : a level: XSCore stays in reset as long as the request is high, no Probe reaches L1D meanwhile.
-*          With CoreResetKeepL1 a Probe of a line held by L1D waits in L2 for the whole reset (and so does
-*          the snoop from the HN behind it); without it the gate answers every Probe at once.
-*
-* rstCycles (CoreResetCtrl, 100 by default): TileLink 1.8.1 section 3.2.2 asks for at least 100 cycles of
-* reset with the valid signals low on every link that is reset (the links inside XSCore).
+* The reset is a level: XSCore stays in reset as long as the request is high, and at least rstCycles
+* (CoreResetCtrl, 100 by default: TileLink 1.8.1 section 3.2.2 asks for at least 100 cycles of reset with the
+* valid signals low on every link that is reset, the links inside XSCore).
 *
 * Sequence (CoreResetCtrl), started by a request (level):
-*   1. sFlush  : the DCache blocks stores, atomics, CMOs and new misses and waits until its misses and
-*                releases are done (DCacheFlushUnit); without CoreResetKeepL1 it then releases every line.
-*                L2 can still probe the DCache.
-*   2. sDrain  : every TileLink channel from the core to L2Top is gated (TLQuiesceGate): no new
-*                request on channel A; wait until every transaction that crossed the boundary
-*                is complete (A->D, Grant->GrantAck, Probe->ProbeAck, Release->ReleaseAck), no
-*                multi-beat message is in the middle of a transfer and L2 offers no Probe.
-*   3. sReset  : XSCore is reset: rstCycles (pulse), or at least rstCycles and until the request drops
-*                (level). isolate = 1. Probes are held (keep) or answered NtoN (sweep) in the gate; with keep
-*                the L1D arrays that survive the reset are not written.
+*   1. sFlush  : channel A of the non-coherent agents of the core (ICache, PTW, instruction and data MMIO:
+*                TL-UL, "early" gates) is closed at once: their requests are of no use after the reset. The
+*                DCache blocks stores, atomics, CMOs and new misses and waits until its misses and releases
+*                are done (DCacheFlushUnit); without CoreResetKeepL1 it then releases every line. L2 can still
+*                probe the DCache. The state is left when the DCache is done and every early gate is quiet:
+*                a Get of a non-coherent agent may need a Probe of L1D in CoupledL2 (a line L1D holds in
+*                TRUNK / TIP), so channel B must stay open until no such Get is outstanding.
+*   2. sDrain  : channel A of L1D is closed, and channel B is closed in the first cycle: Probes are held in L2
+*                (the gate drops B ready, and B valid towards the core). The state is left as soon as every
+*                gate is quiet, the DCache is done and idle (exact emptiness flags, no waiting time), all in
+*                the same cycle; usually that is the first cycle (only a Probe taken in the last cycle of
+*                sFlush can still be open: its ProbeAck is on its way through the L1D buffer).
+*   3. sReset  : XSCore is reset for at least rstCycles and until the request drops. isolate = 1. Probes are
+*                held (keep) or answered NtoN (sweep) in the gate; with keep the L1D arrays that survive the
+*                reset are not written.
 *   4. sRelease: XSCore leaves reset; channels A and B stay closed (and the core isolated) until the DCache
-*                is out of reset and releaseCycles have passed. Then: request low -> sIdle (the core runs);
-*                request still high (pulse only) -> sHold.
-*   5. sHold   : (pulse only) the request is held. XSCore is out of reset but cannot run: channel A
-*                stays closed, and the first instruction fetch needs it (the ICache is empty after its
-*                reset). The DCache is blocked again (no miss, store, CMO) but answers Probes. When the
-*                request drops: sDrain -> sReset -> sRelease once more, so the core starts from a fresh
-*                reset (with the current reset vector) exactly when the request is released.
-* hartInReset (for the Debug Module) is high from the first core reset until the core runs again.
+*                and the frontend are out of reset (the last of the reset chain of the core). Then sIdle: the
+*                core runs. A request raised again meanwhile starts a new sequence from sIdle.
+* hartInReset (for the Debug Module) is high from the core reset until the core runs again.
 *
 * Reset domain crossing: the assertion of the core reset is asynchronous (ResetGen synchronises only its
 * release), so the outputs of the core change at no particular clock edge. Every signal from the core reset
@@ -81,26 +72,32 @@ class QuiesceGateIO extends Bundle {
   // nothing is offered to the core. The outputs of the core change asynchronously when its reset is asserted;
   // this keeps them away from L2 and from the counters below (reset domain crossing isolation).
   val isolate = Input(Bool())
-  val quiet   = Output(Bool())  // nothing outstanding across the boundary, no message in transfer
-  val idle    = Output(Bool())  // quiet, and L2 does not offer a Probe either
+  // nothing outstanding across the boundary, no message in transfer (a Probe offered by L2 but not taken
+  // does not count: it is held or answered by the gate)
+  val quiet   = Output(Bool())
 }
 
 /** TileLink adapter on one client edge (core side -> L2Top side). Pass-through, except that
   * channel A can be blocked, Probes on channel B can be held or answered by the gate itself, every
   * transaction crossing it is tracked, and the core side is isolated while XSCore is in reset.
   * Together with CoreResetCtrl and the DCache drain this is the TileLink-to-TileLink adapter of TileLink
-  * 1.8.1 section 3.2.3 that lets one side of the link be reset separately: the L2 side never sees the reset. */
-class TLQuiesceGate(val name: String)(implicit p: Parameters) extends LazyModule {
+  * 1.8.1 section 3.2.3 that lets one side of the link be reset separately: the L2 side never sees the reset.
+  * early: the gate of a non-coherent agent (TL-UL edge), its channel A is closed from the start of the
+  *        sequence (CoreResetCtrl.earlyBlock); otherwise from sDrain (CoreResetCtrl.gateBlock). */
+class TLQuiesceGate(val gateName: String, val early: Boolean)(implicit p: Parameters) extends LazyModule {
   val node = TLAdapterNode()
   lazy val module = new TLQuiesceGateImp(this)
 }
 
 class TLQuiesceGateImp(outer: TLQuiesceGate) extends LazyModuleImp(outer) {
   val io = IO(new QuiesceGateIO)
-  private val name = outer.name
+  private val gname = outer.gateName
 
-  val states = (outer.node.in zip outer.node.out).map { case ((in, edgeIn), (out, edgeOut)) =>
+  val quiets = (outer.node.in zip outer.node.out).map { case ((in, edgeIn), (out, edgeOut)) =>
     val hasBCE = edgeOut.manager.anySupportAcquireB && edgeOut.client.anySupportProbe
+    // a request of a coherent agent cannot simply be stopped at the start of the sequence: the DCache still
+    // releases lines and answers Probes then
+    require(!(outer.early && hasBCE), s"TLQuiesceGate($gname): an early gate must be on a TL-UL edge")
 
     out.a <> in.a
     in.d <> out.d
@@ -117,7 +114,9 @@ class TLQuiesceGateImp(outer: TLQuiesceGate) extends LazyModuleImp(outer) {
         in.e.ready := false.B
         out.e.valid := false.B
       }
-      // holdB: a Probe waits in L2 while the core is in reset (Probe is a single-beat message)
+      // holdB: a Probe waits in L2 (Probe is a single-beat message). B ready to L2 and B valid to the core
+      // drop in the cycle holdB rises: a Probe offered but not taken may be withdrawn from the core
+      // (TileLink 1.8.1 section 4.1: valid may fall while the beat has not been accepted), L2 keeps offering it
       when (io.holdB) {
         in.b.valid := false.B
         out.b.ready := false.B
@@ -143,8 +142,8 @@ class TLQuiesceGateImp(outer: TLQuiesceGate) extends LazyModuleImp(outer) {
         in.c.ready := false.B
         when (out.c.ready) { ackPending := false.B }
       }
-      assert(!(io.ackB && io.holdB), s"TLQuiesceGate($name): Probes both held and answered")
-      assert(!io.isolate || io.holdB || io.ackB, s"TLQuiesceGate($name): channel B open while XSCore is isolated")
+      assert(!(io.ackB && io.holdB), s"TLQuiesceGate($gname): Probes both held and answered")
+      assert(!io.isolate || io.holdB || io.ackB, s"TLQuiesceGate($gname): channel B open while XSCore is isolated")
     } else {
       in.b.valid := false.B
       in.c.ready := true.B
@@ -174,8 +173,8 @@ class TLQuiesceGateImp(outer: TLQuiesceGate) extends LazyModuleImp(outer) {
     def counter(inc: Bool, dec: Bool, what: String): UInt = {
       val c = RegInit(0.U(8.W))
       c := c + inc.asUInt - dec.asUInt
-      assert(!(dec && !inc && c === 0.U), s"TLQuiesceGate($name): $what underflow")
-      assert(!(inc && !dec && c.andR), s"TLQuiesceGate($name): $what overflow")
+      assert(!(dec && !inc && c === 0.U), s"TLQuiesceGate($gname): $what underflow")
+      assert(!(inc && !dec && c.andR), s"TLQuiesceGate($gname): $what overflow")
       c
     }
 
@@ -185,33 +184,31 @@ class TLQuiesceGateImp(outer: TLQuiesceGate) extends LazyModuleImp(outer) {
     // every request on A gets exactly one response message on D
     val reqs = counter(in.a.fire && aFirst, in.d.fire && dLast && !dIsReleaseAck, "A->D")
 
-    val (quietBCE, probeOffered) = if (hasBCE) {
+    val quietBCE = if (hasBCE) {
       val (cFirst, cLast, _) = edgeIn.firstlast(in.c)
       val cIsProbeAck = in.c.bits.opcode === ProbeAck || in.c.bits.opcode === ProbeAckData
       val cIsRelease  = in.c.bits.opcode === Release || in.c.bits.opcode === ReleaseData
-      // Grant -> GrantAck, Probe -> ProbeAck, Release -> ReleaseAck
+      // Grant -> GrantAck, Probe -> ProbeAck, Release -> ReleaseAck. The counters see the messages where they
+      // cross the gate, so a message still in the L1D buffer (l1d_to_l2_buffer, between the DCache and the
+      // gate) is covered too: a ProbeAck on its way keeps probes above 0, a GrantAck keeps grants above 0.
       val grants   = counter(in.d.fire && dFirst && dIsGrant, in.e.fire, "Grant->GrantAck")
       val probes   = counter(in.b.fire && in.b.bits.opcode === Probe, in.c.fire && cLast && cIsProbeAck, "Probe->ProbeAck")
       val releases = counter(in.c.fire && cLast && cIsRelease, in.d.fire && dIsReleaseAck, "Release->ReleaseAck")
-      // a Probe is the only message L2 starts on its own: one that L2 offers (whether it is held or not)
-      // is not counted yet, idle has to look at it separately (every D message is covered by a counter)
-      (grants === 0.U && probes === 0.U && releases === 0.U && cFirst, out.b.valid)
+      grants === 0.U && probes === 0.U && releases === 0.U && cFirst
     } else {
-      (true.B, false.B)
+      true.B
     }
 
-    val quiet = reqs === 0.U && aFirst && dFirst && quietBCE
-    (quiet, quiet && !probeOffered)
+    reqs === 0.U && aFirst && dFirst && quietBCE
   }
-  io.quiet := states.map(_._1).reduce(_ && _)
-  io.idle  := states.map(_._2).reduce(_ && _)
+  io.quiet := quiets.reduce(_ && _)
 }
 
 /** TileLink adapter on an edge whose manager is inside XSCore (the ICache control registers, reached through
   * the MMIO crossbar of L2Top). While XSCore is in reset or being released (isolate) no request is offered to
   * it and none of its signals (A ready, D valid) reaches the tile side. Only the core's own MMIO reaches
   * these registers (the i_mmio / d_mmio gates drain it), so nothing is in flight across this edge at the
-  * reset point; idle tells so to CoreResetCtrl like a gate does. TL-UL edges only. */
+  * reset point; quiet tells so to CoreResetCtrl like a gate does. TL-UL edges only. */
 class TLResetIsolation(implicit p: Parameters) extends LazyModule {
   val node = TLAdapterNode()
   lazy val module = new TLResetIsolationImp(this)
@@ -220,9 +217,9 @@ class TLResetIsolation(implicit p: Parameters) extends LazyModule {
 class TLResetIsolationImp(outer: TLResetIsolation) extends LazyModuleImp(outer) {
   val io = IO(new Bundle {
     val isolate = Input(Bool())
-    val idle    = Output(Bool())   // no request to the core is waiting for its response
+    val quiet   = Output(Bool())   // no request to the core is waiting for its response
   })
-  val idles = (outer.node.in zip outer.node.out).map { case ((in, edgeIn), (out, edgeOut)) =>
+  val quiets = (outer.node.in zip outer.node.out).map { case ((in, edgeIn), (out, edgeOut)) =>
     require(!(edgeOut.manager.anySupportAcquireB && edgeOut.client.anySupportProbe),
       "TLResetIsolation: TL-UL edges only")
     out.a <> in.a
@@ -248,25 +245,28 @@ class TLResetIsolationImp(outer: TLResetIsolation) extends LazyModuleImp(outer) 
     assert(!(io.isolate && reqs =/= 0.U), "TLResetIsolation: request in flight while XSCore is in reset")
     reqs === 0.U && aFirst
   }
-  io.idle := idles.foldLeft(true.B)(_ && _)
+  io.quiet := quiets.foldLeft(true.B)(_ && _)
 }
 
 class CoreResetCtrlIO extends Bundle {
-  val req         = Input(Bool())   // level, tile clock: reset XSCore; it does not run while high
+  val req         = Input(Bool())   // level, tile clock: reset XSCore; it is held in reset while high
   val busy        = Output(Bool())  // a core reset sequence is in progress
   val inReset     = Output(Bool())  // XSCore reset is asserted
-  val hartInReset = Output(Bool())  // from the first core reset until the core runs again (Debug Module)
+  val hartInReset = Output(Bool())  // from the core reset until the core runs again (Debug Module)
   val l1          = new xiangshan.cache.L1QuiesceIO
-  val gateBlock   = Output(Bool())  // channel A closed
-  val holdProbe   = Output(Bool())  // channel B held in L2 (CoreResetKeepL1)
+  // reset of the frontend, the last of the reset chain of XSCore (core reset domain; looked at in sRelease)
+  val coreInReset = Input(Bool())
+  val earlyBlock  = Output(Bool())  // channel A of the non-coherent agents closed (from sFlush)
+  val gateBlock   = Output(Bool())  // channel A of L1D closed (from sDrain)
+  val holdProbe   = Output(Bool())  // channel B held in L2 (sDrain; and in sReset, sRelease with CoreResetKeepL1)
   val ackProbe    = Output(Bool())  // Probes answered NtoN by the gate (CoreResetKeepL1 = false: L1D swept)
   // XSCore reset asserted or being released (sReset, sRelease): every signal that leaves the core reset
   // domain must be isolated on the tile side (gates, XSTile). A register, glitch-free; it rises on the same
   // clock edge as coreReset, so the first edge that could sample an output of the core changed by the
   // (asynchronous) reset assertion already sees the isolation.
   val isolate     = Output(Bool())
-  val gatesIdle   = Input(Bool())
-  val gatesQuiet  = Input(Bool())
+  val earlyQuiet  = Input(Bool())   // every gate of a non-coherent agent is quiet
+  val gatesQuiet  = Input(Bool())   // every gate and every TLResetIsolation is quiet
   val coreReset   = Output(Bool())  // to XSCore reset (synchronised by the tile)
 }
 
@@ -274,27 +274,29 @@ class CoreResetCtrlIO extends Bundle {
   * keepL1 = CoreResetKeepL1: L1D keeps its lines (Probes are held while the core is in reset), or it releases
   *          every line first (DCache sweep in sFlush) and is reset with the core (Probes are answered NtoN by
   *          the gate meanwhile: L1D holds nothing, L2's directory records nothing for it).
-  * level  = CoreResetLevel: false = pulse + hold, true = the core stays in reset while the request is high.
   * rstCycles: minimum length of the core reset. TileLink 1.8.1 section 3.2.2 asks for at least 100 cycles of
-  *          reset with the valid signals low, for every link of the reset part (the links inside XSCore). */
-class CoreResetCtrl(keepL1: Boolean, level: Boolean, rstCycles: Int = 100, releaseCycles: Int = 8) extends Module {
+  *          reset with the valid signals low, for every link of the reset part (the links inside XSCore).
+  *          The core stays in reset as long as the request is high, but never shorter than that. */
+class CoreResetCtrl(keepL1: Boolean, rstCycles: Int = 100) extends Module {
   val io = IO(new CoreResetCtrlIO)
 
-  val sIdle :: sFlush :: sDrain :: sReset :: sRelease :: sHold :: Nil = Enum(6)
+  val sIdle :: sFlush :: sDrain :: sReset :: sRelease :: Nil = Enum(5)
   val state = RegInit(sIdle)
   val cnt = RegInit(0.U(8.W))
-  require(rstCycles >= 16 && rstCycles < 255 && releaseCycles >= 4 && releaseCycles < 255)
+  require(rstCycles >= 100 && rstCycles < 255, "TileLink 1.8.1, 3.2.2: at least 100 cycles of reset")
 
   val coreReset = RegInit(false.B)
   val hartInReset = RegInit(false.B)
   // sReset or sRelease, as a register (see CoreResetCtrlIO.isolate)
   val closed = RegInit(false.B)
 
-  // the inputs from the DCache come from the core reset domain too: done is used only while the core runs
-  // (sFlush, sDrain), alive only when the core is out of reset (sRelease, its release is synchronous); in
-  // sReset, when the core reset is asserted asynchronously, neither reaches the state machine
-  val l1Done  = io.l1.done && !closed
-  val l1Alive = io.l1.alive && state === sRelease
+  // the inputs from the DCache and the frontend come from the core reset domain: done and idle are used only
+  // while the core runs (sFlush, sDrain), alive and the frontend reset only when the core leaves reset
+  // (sRelease, the release is synchronous); in sReset, when the core reset is asserted asynchronously, none
+  // of them reaches the state machine
+  val l1Done = io.l1.done && !closed
+  val l1Idle = io.l1.idle && !closed
+  val coreUp = io.l1.alive && !io.coreInReset && state === sRelease
 
   switch (state) {
     is (sIdle) {
@@ -302,50 +304,30 @@ class CoreResetCtrl(keepL1: Boolean, level: Boolean, rstCycles: Int = 100, relea
       when (io.req) { state := sFlush }
     }
     is (sFlush) {
-      // DCache drain (and sweep, without keepL1); L2 may still probe the DCache, every channel stays open
-      when (l1Done) { state := sDrain; cnt := 0.U }
+      // channel A of the non-coherent agents is closed (earlyBlock); DCache drain (and sweep, without keepL1);
+      // L2 may still probe the DCache. A Get of a non-coherent agent may wait in L2 for a Probe of L1D, so B
+      // stays open until every early gate is quiet.
+      when (l1Done && io.earlyQuiet) { state := sDrain }
     }
     is (sDrain) {
-      // channel A gated; wait for 16 consecutive idle cycles of every gate (and of the DCache), and idle
-      // in this cycle too: a message that crossed a gate in the last cycle before the reset would be lost
-      val idle = io.gatesIdle && l1Done
-      cnt := Mux(idle, Mux(cnt === 15.U, cnt, cnt + 1.U), 0.U)
-      when (cnt === 15.U && idle) {
+      // channel A of L1D closed, B closed from the first cycle (holdProbe). The decision looks at quiet of this
+      // cycle (the counters already include a Probe taken in the last cycle of sFlush), so nothing that
+      // crossed a gate before can be lost
+      when (io.gatesQuiet && l1Done && l1Idle) {
         state := sReset; cnt := 0.U; coreReset := true.B; hartInReset := true.B; closed := true.B
       }
     }
     is (sReset) {
-      // pulse: rstCycles, however long the request is held (with keepL1 Probes must not wait that long);
-      // level: at least rstCycles, and until the request drops (Probes held or answered by the gate meanwhile)
+      // at least rstCycles, and until the request drops (Probes held or answered by the gate meanwhile)
       when (cnt < rstCycles.U) { cnt := cnt + 1.U }
-      val leave = if (level) cnt >= rstCycles.U && !io.req else cnt >= rstCycles.U
-      when (leave) { state := sRelease; cnt := 0.U; coreReset := false.B }
+      when (cnt >= rstCycles.U && !io.req) { state := sRelease; coreReset := false.B }
     }
     is (sRelease) {
       // the core leaves reset through its reset synchronisers; channels A and B stay closed (and the core
-      // isolated) until the DCache is out of reset (with keepL1 it takes the held Probes) and releaseCycles
-      // have passed
-      when (cnt < releaseCycles.U) { cnt := cnt + 1.U }
-      when (cnt >= releaseCycles.U && l1Alive) {
-        closed := false.B
-        if (level) {
-          // a request raised again meanwhile starts a new sequence from sIdle
-          state := sIdle
-          hartInReset := false.B
-        } else {
-          when (io.req) {
-            state := sHold
-          }.otherwise {
-            state := sIdle
-            hartInReset := false.B
-          }
-        }
+      // isolated) until the DCache (with keepL1 it takes the held Probes) and the frontend are out of reset
+      when (coreUp) {
+        state := sIdle; closed := false.B; hartInReset := false.B
       }
-    }
-    is (sHold) {
-      // (pulse only) the core cannot fetch (channel A closed), the DCache answers Probes; when the request
-      // drops, reset the core once more (sDrain waits until the DCache and the gates are idle again)
-      when (!io.req) { state := sDrain; cnt := 0.U }
     }
   }
 
@@ -356,21 +338,21 @@ class CoreResetCtrl(keepL1: Boolean, level: Boolean, rstCycles: Int = 100, relea
   // the isolation covers the whole time the core reset is asserted
   assert(closed === (state === sReset || state === sRelease), "CoreResetCtrl: isolation out of step with the state")
   assert(!coreReset || closed, "CoreResetCtrl: XSCore reset without isolation")
-  if (level) {
-    assert(state =/= sHold, "CoreResetCtrl: sHold in level mode")
-  }
 
   io.busy := state =/= sIdle
   io.inReset := state === sReset
   io.hartInReset := hartInReset
-  // keep the DCache drained and blocked until the core is reset, and while it is held
-  io.l1.req := state === sFlush || state === sDrain || state === sHold
+  // keep the DCache drained and blocked until the core is reset
+  io.l1.req := state === sFlush || state === sDrain
   io.l1.freeze := (if (keepL1) closed else false.B)
-  io.gateBlock := state === sDrain || state === sReset || state === sRelease || state === sHold
-  // no Probe reaches the core while it is in reset and until its DCache is out of reset: one pulse
-  // (pulse mode) or as long as the request is held (level mode). With keepL1 the Probe waits in L2 (L1D
-  // holds the line, maybe dirty), without it the gate answers NtoN (L1D released everything before).
-  io.holdProbe := (if (keepL1) closed else false.B)
+  // channel A: the non-coherent agents from the start, L1D from sDrain (it releases lines in sFlush)
+  io.earlyBlock := state =/= sIdle
+  io.gateBlock := state === sDrain || closed
+  // channel B, a function of the state register: closed in the first cycle of sDrain. With keepL1 the Probe
+  // waits in L2 until the DCache is out of reset (L1D holds the line, maybe dirty); without it the gate answers
+  // NtoN while the core is in reset (L1D released everything before), and holds it in sDrain (the DCache is
+  // still there, but no new Probe may reach it any more)
+  io.holdProbe := (if (keepL1) state === sDrain || closed else state === sDrain)
   io.ackProbe := (if (keepL1) false.B else closed)
   io.isolate := closed
   io.coreReset := coreReset

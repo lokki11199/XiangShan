@@ -144,6 +144,8 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
     // a flush request leaves s3 (its Release, if any, has been handed to the writeback queue)
     val flush_req = Flipped(DecoupledIO(new MainPipeReq))
     val flush_resp = Output(Bool())
+    // a request (of any kind) is in s1, s2 or s3: DCacheFlushUnit waits until MainPipe is empty
+    val busy = Output(Bool())
     // find matched refill data in missentry
     val mainpipe_info = Output(new MainPipeInfoToMQ)
     // missqueue refill data
@@ -947,6 +949,7 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
 
   io.meta_write.valid := s3_fire && update_meta
   io.flush_resp := s3_fire && s3_req.flush
+  io.busy := s1_valid || s2_valid || s3_valid
   io.meta_write.bits.idx := s3_idx
   io.meta_write.bits.way_en := s3_way_en
   io.meta_write.bits.meta.coh := new_coh

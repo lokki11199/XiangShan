@@ -1054,7 +1054,7 @@ class MissQueue(edge: TLEdgeOut, reqNum: Int)(implicit p: Parameters) extends DC
     }
 
     val wfi = Flipped(new WfiReqBundle)
-    // no miss entry in use and nothing in the enqueue pipeline register (DCacheFlushUnit)
+    // no miss entry in use, nothing in the enqueue pipeline register and no CMO in progress (DCacheFlushUnit)
     val empty = Output(Bool())
 
     val debugTopDown = new DCacheTopDownIO
@@ -1242,7 +1242,7 @@ class MissQueue(edge: TLEdgeOut, reqNum: Int)(implicit p: Parameters) extends DC
     cmo_unit.io.resp_chanD.bits := DontCare
   }
   io.wfi.wfiSafe := (Seq(cmo_unit.io.wfi.wfiSafe) ++ entries.map(_.io.wfi.wfiSafe)).reduce(_&&_)
-  io.empty := !Cat(entries.map(_.io.busy)).orR && !miss_req_pipe_reg.reg_valid()
+  io.empty := !Cat(entries.map(_.io.busy)).orR && !miss_req_pipe_reg.reg_valid() && cmo_unit.io.req.ready
 
   io.req.ready := accept
   io.refill_to_ldq.valid := Cat(entries.map(_.io.refill_to_ldq.valid)).orR

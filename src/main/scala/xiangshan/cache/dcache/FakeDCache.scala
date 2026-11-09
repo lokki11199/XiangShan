@@ -28,6 +28,7 @@ class FakeDCache()(implicit p: Parameters) extends XSModule with HasDCacheParame
   io := DontCare
   // no cache, nothing to drain or flush
   io.quiesce.done := io.quiesce.req
+  io.quiesce.idle := true.B
   val alive = RegInit(false.B)
   alive := true.B
   io.quiesce.alive := alive
