@@ -1,4 +1,2 @@
 tools: Yosys 0.70 , abc pdr, smtbmc yices
 === configuration k: KEEP
-design prove rstCycles=100 (abc pdr, unbounded): PASS  (122.02 sec)
-design prove rstCycles=16 (abc pdr, unbounded): PASS  (8.71 sec)
