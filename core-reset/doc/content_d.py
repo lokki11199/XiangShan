@@ -117,8 +117,8 @@ def section71(C):
                'Версия v4 не компилировалась (конфликт `TLQuiesceGate.name` и `LazyModule.name`).'))
     s.append(P('<b>Elaboration модулей.</b> Стенд `verification/elab/CoreResetElabHarness.scala` (object `xiangshan.CoreResetElab`) '
                'собирает отдельные модули в Verilog: `CoreResetCtrl` (KEEP и SWEEP), гейты `TLQuiesceGate` (TL-C и TL-UL), '
-               '`TLResetIsolation`; а также `DCache` (`dcache_keep`, `dcache_sweep`: DCacheWrapper с менеджером и клиентом ICache ctrl). '
-               'Из вывода первых трёх целей `scripts/extract_rtl.py` вырезает RTL, на котором работают миттеры:'))
+               '`TLResetIsolation` (цели `ctrl_keep`, `ctrl_sweep`, `gates`). '
+               '`scripts/extract_rtl.py` вырезает из их вывода RTL, на котором работают миттеры:'))
     rows = [['Файл RTL (`verification/rtl/`)', 'Модуль', 'Есть']]
     for f, m in [('CoreResetCtrl_keep.sv', 'CoreResetCtrl, KEEP'), ('CoreResetCtrl_sweep.sv', 'CoreResetCtrl, SWEEP'),
                  ('TLQuiesceGate.sv', 'TLQuiesceGate, TL-C (l1d)'), ('TLQuiesceGate_1.sv', 'TLQuiesceGate, TL-UL (ранний)'),
@@ -126,7 +126,9 @@ def section71(C):
         p = os.path.join(C.ver, 'rtl', f)
         rows.append(['`%s`' % f, m, ('да (%d строк)' % sum(1 for _ in open(p, errors='replace'))) if os.path.exists(p) else ND])
     s.append(table(rows, [2.4, 2.4, 1.0]))
-    s.append(P('Результат elaboration целей `dcache_keep` / `dcache_sweep` в пакет результатов не записан: %s.' % ND, 'small'))
+    s.append(P('Отдельной цели для DCache в стенде нет: DCache с флагами пустоты и `DCacheFlushUnit` собрана в составе полной '
+               'elaboration XSNoCTop (KEEP и SWEEP, см. ниже); там же по RTL проверено, что массивы тегов, meta и error DCache '
+               'берут сброс тайла (`io_metaReset`), а не сброс ядра.', 'small'))
     s.append(Spacer(1, 3))
     e = C.eq
     s.append(P('<b>Эквивалентность RTL ↔ модели.</b> Пять миттеров (`formal/eq_chisel.sv`, `formal/run_equiv.sh`) сравнивают '
