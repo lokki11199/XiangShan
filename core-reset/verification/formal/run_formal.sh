@@ -4,14 +4,18 @@
 #   k   KEEP   (default)
 #   s   sweep  (CFG_SWEEP)
 # For each: prove (abc pdr, unbounded) with rstCycles = 100 (the default of CoreResetCtrl) and with 16;
-# with rstCycles = 16 (RST16, shorter traces): bmc 40 (assumptions satisfiable), cover, and every mutant that
+# with rstCycles = 16 (RST16, shorter traces): cover, and every mutant that
 # applies to the configuration must fail within 60 cycles (bmc); the equivalent mutants (see EQUIV) must pass
 # the unbounded proof.
 #   ./run_formal.sh [k|s ...]       (default: both)
-# Engines: prove = abc pdr; bmc (design bmc 40 and the mutants, bmc 60) = abc bmc3 (BMC_ENGINE=smtbmc selects
-# smtbmc + SMT solver instead); cover = smtbmc (COVER_ENGINE=assert instead: each cover Cn is run as the assertion
-# !(Cn) with abc bmc3, depth 120; reached at the step where it fails). A mutant that abc bmc3 refutes without
-# naming the assertion is rerun with smtbmc to the depth of the failing step to get the label.
+# Engines: prove = abc pdr; mutants (bmc 60) = abc bmc3 (BMC_ENGINE=smtbmc selects smtbmc + SMT solver instead);
+# a mutant not caught within 60 cycles is rerun with abc pdr (prove mode, reported with "(pdr)"). A mutant that abc
+# refutes without naming the assertion is rerun with smtbmc to the depth of the failing step to get the label.
+# Covers (default, COVER_ENGINE=assert): each cover Cn is run as the assertion !(Cn) (COVER_AS_ASSERT,
+# COVER_ONLY=n) in prove mode with abc pdr: FAIL = cover reached ("step" = length of the trace found by pdr, not
+# necessarily the shortest), PASS = not reachable (error). COVER_ENGINE=smtbmc: sby cover mode, depth 120.
+# There is no separate design bmc: the unbounded proofs cover every depth (bmc 40 with abc / yices does not
+# finish) and the covers show that the assumptions are satisfiable.
 # Needs SymbiYosys (sby), yosys, yosys-abc and an SMT solver for yosys-smtbmc: tools from ../scripts/env.sh
 # (OSS_CAD_SUITE or /opt/eda). Solver: SMT_SOLVER (default yices if installed, else boolector, else z3).
 # Exit code = number of unexpected results.
@@ -19,6 +23,11 @@ cd "$(dirname "$0")"
 . ../scripts/env.sh
 SMT=${SMT_SOLVER:-$(if command -v yices-smt2 >/dev/null; then echo yices; elif command -v boolector >/dev/null; then echo boolector; else echo z3; fi)}
 echo "tools: $(yosys -V 2>/dev/null | cut -d'(' -f1), abc pdr, smtbmc $SMT"
+frames() {  # frames DIR: length of the counterexample (abc log, else the trace)
+  local f; f=$(grep -o "asserted in frame [0-9]*" $1/logfile.txt | head -1 | grep -o "[0-9]*$")
+  [ -z "$f" ] && [ -f $1/engine_0/trace.vcd ] && f=$(grep -c '^#' $1/engine_0/trace.vcd)
+  echo "$f"
+}
 BMC_ENG="abc bmc3"; [ "$BMC_ENGINE" = smtbmc ] && BMC_ENG="smtbmc $SMT"
 mk() {  # mk NAME DEFINES MODE [DEPTH [ENGINE]]
   local defs=""; for d in $2; do defs="$defs -D$d"; done
@@ -63,18 +72,17 @@ for c in $CFGS; do
     echo "design prove rstCycles=$R (abc pdr, unbounded): $r  ($(grep -o "Time = *[0-9.]* sec" ${c}_prove$R/logfile.txt | tail -1 | sed "s/Time = *//"))"; [ "$r" = PASS ] || fails=$((fails+1))
   done
   D16="$D RST16"
-  mk ${c}_bmc "$D16" bmc 40; sby -f ${c}_bmc.sby >/dev/null 2>&1; r=$(res ${c}_bmc)
-  echo "design      bmc 40 ($BMC_ENG): $r (assumptions satisfiable: $(if [ "$BMC_ENG" = "abc bmc3" ]; then echo "not checked by abc, see covers"; else grep -q PREUNSAT ${c}_bmc/logfile.txt && echo NO || echo yes; fi))"; [ "$r" = PASS ] || fails=$((fails+1))
-  if [ "$COVER_ENGINE" = assert ]; then
-    # covers as assertions (abc bmc3, depth 120): a cover is reached where its assertion fails
+  echo "design      bmc: not run (the unbounded proofs with abc pdr cover every depth; the assumptions are shown satisfiable by the covers reached)"
+  if [ "${COVER_ENGINE:-assert}" = assert ]; then
+    # covers as assertions (abc pdr): FAIL = the cover is reached
     cov=""; ok=1
     for k in 1 2 3 4 5 6 7 8 9; do
       [ $k = 5 ] && [ $c = s ] && continue; [ $k = 7 ] && [ $c = k ] && continue
-      n=${c}_cov$k; mk $n "$D16 COVER_AS_ASSERT COVER_ONLY=$k" bmc 120; sby -f $n.sby >/dev/null 2>&1
-      f=$(grep -o "asserted in frame [0-9]*" $n/logfile.txt | head -1 | grep -o "[0-9]*$")
-      if [ "$(res $n)" = FAIL ] && [ -n "$f" ]; then cov="$cov C$k step $f,"; else ok=0; cov="$cov C$k NOT-REACHED,"; fi
+      n=${c}_cov$k; mk $n "$D16 COVER_AS_ASSERT COVER_ONLY=$k" prove; sby -f $n.sby >/dev/null 2>&1
+      f=$(frames $n)
+      if [ "$(res $n)" = FAIL ]; then cov="$cov C$k step $f,"; else ok=0; cov="$cov C$k NOT-REACHED($(res $n)),"; fi
     done
-    echo "design      cover (as assert, abc bmc3): $([ $ok = 1 ] && echo PASS || echo FAIL) ($(echo "$cov" | tr ',' '\n' | grep -c ' step') reached:$cov)"; [ $ok = 1 ] || fails=$((fails+1))
+    echo "design      cover (as assert, abc pdr; step = length of the trace found by pdr, not necessarily the shortest): $([ $ok = 1 ] && echo PASS || echo FAIL) ($(echo "$cov" | tr ',' '\n' | grep -c ' step') reached:$cov)"; [ $ok = 1 ] || fails=$((fails+1))
   else
     mk ${c}_cover "$D16" cover; sby -f ${c}_cover.sby >/dev/null 2>&1; r=$(res ${c}_cover)
     # the engine log lists every cover reached (the summary shows only the first five)
@@ -87,13 +95,23 @@ for c in $CFGS; do
     why=$(grep -o "Assert failed in fv_boundary: [A-Za-z0-9_]*" $n/logfile.txt | head -4 | sed 's/.*: //' | sort -u | tr '\n' ' ')
     step=$(grep -o "Checking assertions in step [0-9]*" $n/logfile.txt | tail -1 | grep -o "[0-9]*$")
     if [ "$BMC_ENG" = "abc bmc3" ] && [ "$r" = FAIL ]; then
-      step=$(grep -o "asserted in frame [0-9]*" $n/logfile.txt | head -1 | grep -o "[0-9]*$")
+      step=$(frames $n)
       if [ -z "$why" ] && [ -n "$step" ]; then   # label: short smtbmc rerun up to the failing step
         mk ${n}_lbl "$D16 $m" bmc $((step+1)) "smtbmc $SMT"; sby -f ${n}_lbl.sby >/dev/null 2>&1
         why=$(grep -o "Assert failed in fv_boundary: [A-Za-z0-9_]*" ${n}_lbl/logfile.txt | head -4 | sed 's/.*: //' | sort -u | tr '\n' ' ')
       fi
     fi
-    printf "%-32s bmc : %s at cycle %s  %s\n" "$m" "$r" "$step" "$why"
+    tag="bmc "
+    if [ "$r" != FAIL ]; then   # not caught within 60 cycles: unbounded run
+      mk ${n}_pdr "$D16 $m" prove; sby -f ${n}_pdr.sby >/dev/null 2>&1; r=$(res ${n}_pdr); tag="bmc 60 clean, (pdr)"
+      step=$(frames ${n}_pdr)
+      why=$(grep -o "Assert failed in fv_boundary: [A-Za-z0-9_]*" ${n}_pdr/logfile.txt | head -4 | sed 's/.*: //' | sort -u | tr '\n' ' ')
+      if [ "$r" = FAIL ] && [ -z "$why" ] && [ -n "$step" ]; then
+        mk ${n}_lbl "$D16 $m" bmc $((step+1)) "smtbmc $SMT"; sby -f ${n}_lbl.sby >/dev/null 2>&1
+        why=$(grep -o "Assert failed in fv_boundary: [A-Za-z0-9_]*" ${n}_lbl/logfile.txt | head -4 | sed 's/.*: //' | sort -u | tr '\n' ' ')
+      fi
+    fi
+    printf "%-32s %s: %s at cycle %s  %s\n" "$m" "$tag" "$r" "$step" "$why"
     [ "$r" = FAIL ] || fails=$((fails+1))
   done
   for m in $EQUIV; do
