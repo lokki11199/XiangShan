@@ -852,6 +852,11 @@ class DCacheIO(implicit p: Parameters) extends DCacheBundle {
   val cmoOpResp = DecoupledIO(new CMOResp)
   val l1Miss = Output(Bool())
   val wfi = Flipped(new WfiReqBundle)
+  // drain before a reset of XSCore alone (see DCacheFlushUnit)
+  val quiesce = Flipped(new L1QuiesceIO)
+  // CoreResetKeepL1: reset of the arrays that survive a reset of XSCore alone, coherence meta and error
+  // flags (tile reset)
+  val metaReset = Option.when(p(SoCParamsKey).EnableCoreReset && p(SoCParamsKey).CoreResetKeepL1)(Input(AsyncReset()))
 }
 
 private object ArbiterCtrl {
@@ -1047,6 +1052,10 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   val missQueue    = Module(new MissQueue(edge, MissReqPortCount))
   val probeQueue   = Module(new ProbeQueue(edge))
   val wb           = Module(new WritebackQueue(edge))
+  // CoreResetKeepL1 = false: before the core reset the flush unit releases every line (sweep)
+  val flushUnit    = Module(new DCacheFlushUnit(sweep = p(SoCParamsKey).EnableCoreReset && !p(SoCParamsKey).CoreResetKeepL1))
+  // while the flush unit is active: no store, atomic, CMO or new miss enters the DCache
+  val flushBlock   = flushUnit.io.block
 
   missQueue.io.lqEmpty := io.lqEmpty
   missQueue.io.hartId := io.hartId
@@ -1060,7 +1069,18 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   mainPipe.io.replace <> missQueue.io.replace
   mainPipe.io.sms_agt_evict_req <> io.sms_agt_evict_req
   io.memSetPattenDetected := missQueue.io.memSetPattenDetected
-  io.wfi <> missQueue.io.wfi
+  // A WFI request holds unsent Acquires in the miss queue; the flush must be able to drain it,
+  // so the WFI request is masked while the flush unit is active.
+  missQueue.io.wfi.wfiReq := io.wfi.wfiReq && !flushBlock
+  io.wfi.wfiSafe := missQueue.io.wfi.wfiSafe
+
+  // L1 quiesce before a core-only reset
+  flushUnit.io.flush <> io.quiesce
+  flushUnit.io.mq_empty := missQueue.io.empty
+  flushUnit.io.wbq_empty := wb.io.empty
+  // sweep: flush requests through MainPipe (lowest priority, see MainPipe.flush_req)
+  mainPipe.io.flush_req <> flushUnit.io.pipe_req
+  flushUnit.io.pipe_resp := mainPipe.io.flush_resp
 
   // l1 dcache controller
   outer.cacheCtrlOpt.foreach {
@@ -1155,6 +1175,20 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   }
   meta_write_ports.zip(metaArray.io.write).foreach { case (p, w) => w <> p }
 
+  // Reset of XSCore alone that keeps L1D (EnableCoreReset, CoreResetKeepL1): tags and data are SRAMs and
+  // are never reset, but the coherence state of every line (metaArray) and its error flags (errorArray) are
+  // flops. They take the tile reset instead of the core reset, so L1D still holds its lines after a core
+  // reset. While the core reset is asserted or released (freeze) nothing may be written into them.
+  // Without CoreResetKeepL1 they stay on the core reset (as upstream): the flush unit has released every line
+  // before (sweep), L1D starts empty after a core reset.
+  io.metaReset.foreach { r =>
+    metaArray.reset := r
+    errorArray.reset := r
+    when (io.quiesce.freeze) {
+      metaArray.io.write.foreach(_.valid := false.B)
+    }
+  }
+
   // read extra meta (exclude stu)
   (meta_read_ports.take(HybridLoadReadBase + 1) ++
    meta_read_ports.takeRight(backendParams.HyuCnt)).zip(errorArray.io.read).foreach { case (p, r) => r <> p }
@@ -1207,6 +1241,11 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
     // refillPipe.io.error_flag_write // corrupted signal from l2
   )
   error_flag_write_ports.zip(errorArray.io.write).foreach { case (p, w) => w <> p }
+  io.metaReset.foreach { _ =>
+    when (io.quiesce.freeze) {
+      errorArray.io.write.foreach(_.valid := false.B)
+    }
+  }
 
   val prefetch_flag_write_ports = ldu.map(_.io.prefetch_flag_write) ++ Seq(
     mainPipe.io.prefetch_flag_write // set prefetch_flag to false if coh is set to Nothing
@@ -1318,6 +1357,18 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
     dataWriteArb_dup.io.in(0).bits := mainPipe.io.data_write_dup(bank).bits
 
     bankedDataArray.io.write_dup(bank) <> dataWriteArb_dup.io.out
+  }
+
+  // CoreResetKeepL1: tags and data survive the core reset as well (SRAMs, never reset). While the core reset
+  // is asserted or released (freeze, a register of the tile reset domain) no write enable reaches them,
+  // whatever the control logic of the core reset domain drives at that time (isolation of the write enables;
+  // nothing should write then anyway, see the assertion below).
+  io.metaReset.foreach { _ =>
+    when (io.quiesce.freeze) {
+      tagArray.io.write.valid := false.B
+      bankedDataArray.io.write.valid := false.B
+      bankedDataArray.io.write_dup.foreach(_.valid := false.B)
+    }
   }
 
   bankedDataArray.io.readline <> mainPipe.io.data_readline
@@ -1532,6 +1583,14 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   missReqArb.io.out <> missQueue.io.req
   missReadyGen.io.queryMQ <> missQueue.io.queryMQ
   io.cmoOpReq <> missQueue.io.cmo_req
+  // flush: no new miss (load/store/prefetch/AMO) and no CMO is accepted; requesters replay
+  when (flushBlock) {
+    missQueue.io.req.valid := false.B
+    missReqArb.io.out.ready := false.B
+    missReadyGen.io.queryMQ.foreach(_.ready := false.B)
+    missQueue.io.cmo_req.valid := false.B
+    io.cmoOpReq.ready := false.B
+  }
   io.cmoOpResp <> missQueue.io.cmo_resp
 
   XSPerfAccumulate("miss_queue_fire", PopCount(VecInit(missReqArb.io.in.map(_.fire))) >= 1.U)
@@ -1584,12 +1643,24 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   // block the req in main pipe
   probeQueue.io.pipe_req <> mainPipe.io.probe_req
   io.lsu.store.req <> mainPipe.io.store_req
+  // flush: stores wait in the sbuffer. A store writes data (SRAM) and coherence meta (survives the core
+  // reset with CoreResetKeepL1) in MainPipe s3, and a store miss may start an eviction: none may be in
+  // MainPipe when the core reset hits it. With the sweep a store would also re-dirty a released line.
+  when (flushBlock) {
+    mainPipe.io.store_req.valid := false.B
+    io.lsu.store.req.ready := false.B
+  }
 
   io.lsu.store.replay_resp.valid := RegNext(mainPipe.io.store_replay_resp.valid)
   io.lsu.store.replay_resp.bits := RegEnable(mainPipe.io.store_replay_resp.bits, mainPipe.io.store_replay_resp.valid)
   io.lsu.store.main_pipe_hit_resp := mainPipe.io.store_hit_resp
 
   mainPipe.io.atomic_req <> io.lsu.atomics.req
+  // flush: atomics (AMO, LR/SC) wait as well, for the same reason
+  when (flushBlock) {
+    mainPipe.io.atomic_req.valid := false.B
+    io.lsu.atomics.req.ready := false.B
+  }
 
   mainPipe.io.invalid_resv_set := RegNext(
     wb.io.req.fire &&
@@ -1610,6 +1681,16 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
   // wb
   // add a queue between MainPipe and WritebackUnit to reduce MainPipe stalls due to WritebackUnit busy
   wb.io.req <> mainPipe.io.wb
+
+  // core-only reset with CoreResetKeepL1: freeze masks the writes into every L1D array that survives the
+  // reset. Nothing should even try to write then: the DCache was drained, channel A is closed (no refill, and
+  // no instruction runs: the ICache is empty after its reset) and Probes are held in XSTile.
+  assert(!(io.quiesce.freeze && (tag_write_arb.io.out.valid || dataWriteArb.io.out.valid)),
+    "DCache: L1D array write while the core reset is in progress")
+  // after the drain no voluntary Release may start: the reset point must find the WritebackQueue idle
+  assert(!(io.quiesce.done && wb.io.req.fire && wb.io.req.bits.voluntary),
+    "DCache: Release started after the drain reported done")
+
   bus.c     <> wb.io.mem_release
   // wb.io.release_wakeup := refillPipe.io.release_wakeup
   // wb.io.release_update := mainPipe.io.release_update

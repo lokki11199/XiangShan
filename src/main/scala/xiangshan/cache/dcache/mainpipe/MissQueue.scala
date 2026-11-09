@@ -467,6 +467,8 @@ class MissEntry(edge: TLEdgeOut, reqNum: Int)(implicit p: Parameters) extends DC
     val l1Miss = Output(Bool())
 
     val wfi = Flipped(new WfiReqBundle)
+    // this entry holds a miss (used by DCacheFlushUnit to wait until all misses are done)
+    val busy = Output(Bool())
   })
 
   assert(!RegNext(io.primary_valid && !io.primary_ready))
@@ -654,6 +656,7 @@ class MissEntry(edge: TLEdgeOut, reqNum: Int)(implicit p: Parameters) extends DC
   val hasData = RegInit(true.B)
   val isDirty = RegInit(false.B)
   io.wfi.wfiSafe := GatedValidRegNext(no_pending && io.wfi.wfiReq)
+  io.busy := req_valid
   when (io.mem_grant.fire) {
     w_grantfirst := true.B
     grant_param := io.mem_grant.bits.param
@@ -1051,6 +1054,8 @@ class MissQueue(edge: TLEdgeOut, reqNum: Int)(implicit p: Parameters) extends DC
     }
 
     val wfi = Flipped(new WfiReqBundle)
+    // no miss entry in use and nothing in the enqueue pipeline register (DCacheFlushUnit)
+    val empty = Output(Bool())
 
     val debugTopDown = new DCacheTopDownIO
     val l1Miss = Output(Bool())
@@ -1237,6 +1242,7 @@ class MissQueue(edge: TLEdgeOut, reqNum: Int)(implicit p: Parameters) extends DC
     cmo_unit.io.resp_chanD.bits := DontCare
   }
   io.wfi.wfiSafe := (Seq(cmo_unit.io.wfi.wfiSafe) ++ entries.map(_.io.wfi.wfiSafe)).reduce(_&&_)
+  io.empty := !Cat(entries.map(_.io.busy)).orR && !miss_req_pipe_reg.reg_valid()
 
   io.req.ready := accept
   io.refill_to_ldq.valid := Cat(entries.map(_.io.refill_to_ldq.valid)).orR

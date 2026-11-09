@@ -68,6 +68,9 @@ class MainPipeReq(implicit p: Parameters) extends DCacheBundle {
   // replace
   val replace = Bool()
   val replace_way_en = UInt(DCacheWays.W)
+  // flush: voluntarily release the line in (set of vaddr, way replace_way_en) and invalidate it.
+  // Issued only by DCacheFlushUnit before a reset of XSCore (core + L1) alone.
+  val flush = Bool()
 
   // prefetch
   val pf_source = UInt(L1PfSourceBits.W)
@@ -95,6 +98,7 @@ class MainPipeReq(implicit p: Parameters) extends DCacheBundle {
     req.store_data := store.data
     req.store_mask := store.mask
     req.replace := false.B
+    req.flush := false.B
     req.error := false.B
     req.id := store.id
     req.miss_fail_cause_evict_btot := false.B
@@ -136,6 +140,10 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
     // atmoics
     val atomic_req = Flipped(DecoupledIO(new MainPipeReq))
     val atomic_resp = ValidIO(new MainPipeResp)
+    // L1 flush-all sweep (DCacheFlushUnit): one request per (set, way); flush_resp pulses when
+    // a flush request leaves s3 (its Release, if any, has been handed to the writeback queue)
+    val flush_req = Flipped(DecoupledIO(new MainPipeReq))
+    val flush_resp = Output(Bool())
     // find matched refill data in missentry
     val mainpipe_info = Output(new MainPipeInfoToMQ)
     // missqueue refill data
@@ -248,14 +256,29 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
     storeWaitCycles := storeWaitCycles + 1.U
   }
 
+  // only the flush port may carry a flush request (other producers leave the field DontCare)
+  def withFlush(in: DecoupledIO[MainPipeReq], isFlush: Boolean): DecoupledIO[MainPipeReq] = {
+    val w = Wire(DecoupledIO(new MainPipeReq))
+    w.valid := in.valid
+    w.bits := in.bits
+    w.bits.flush := isFlush.B
+    in.ready := w.ready
+    w
+  }
+  val probe_req_in  = withFlush(io.probe_req, false)
+  val refill_req_in = withFlush(io.refill_req, false)
+  val atomic_req_in = withFlush(io.atomic_req, false)
+  val flush_req_in  = withFlush(io.flush_req, true)
+
   // s0: read meta and tag
   val req = Wire(DecoupledIO(new MainPipeReq))
   arbiter(
     in = Seq(
-      io.probe_req,
-      io.refill_req,
+      probe_req_in,
+      refill_req_in,
       store_req, // Note: store_req.ready is now manually assigned for better timing
-      io.atomic_req,
+      atomic_req_in,
+      flush_req_in // lowest priority: the sweep only runs while stores, atomics and misses are blocked
     ),
     out = req,
     name = Some("main_pipe_req")
@@ -287,11 +310,14 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   val amo_need_data = !s0_req.probe && s0_req.isAMO
   val miss_need_data = s0_req.miss
   val replace_need_data = s0_req.replace
+  // dirtiness is only known in s1, so a flush always reads the whole line
+  val flush_need_data = s0_req.flush
 
-  val banked_need_data = store_need_data || probe_need_data || amo_need_data || miss_need_data || replace_need_data
+  val banked_need_data = store_need_data || probe_need_data || amo_need_data || miss_need_data || replace_need_data ||
+    flush_need_data
 
   val s0_banked_rmask = Mux(store_need_data, banked_store_rmask,
-    Mux(probe_need_data || amo_need_data || miss_need_data || replace_need_data,
+    Mux(probe_need_data || amo_need_data || miss_need_data || replace_need_data || flush_need_data,
       banked_full_rmask,
       banked_none_rmask
     ))
@@ -391,19 +417,28 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   val s1_need_replacement = s1_req.miss && !s1_tag_match
   val s1_need_eviction = s1_req.miss && !s1_tag_match && s1_repl_coh.state =/= ClientStates.Nothing
 
-  val s1_way_en = Mux(io.pseudo_error.valid || s1_need_replacement, s1_repl_way_en, s1_tag_ecc_match_way)
+  // flush: the way is given by the request, tag and coherence state are taken from that way
+  val s1_flush = s1_req.flush
+  val s1_flush_tag = ParallelMux(s1_req.replace_way_en.asBools, (0 until nWays).map(w => tag_resp(w)))
+  val s1_flush_coh = ParallelMux(s1_req.replace_way_en.asBools, (0 until nWays).map(w => meta_resp(w))).asTypeOf(new ClientMetadata)
+
+  val s1_way_en = Mux(
+    s1_flush,
+    s1_req.replace_way_en,
+    Mux(io.pseudo_error.valid || s1_need_replacement, s1_repl_way_en, s1_tag_ecc_match_way)
+  )
   assert(!RegNext(s1_fire && PopCount(s1_way_en) > 1.U))
 
-  val s1_tag = s1_hit_tag
-  val s1_coh = s1_hit_coh
+  val s1_tag = Mux(s1_flush, s1_flush_tag, s1_hit_tag)
+  val s1_coh = Mux(s1_flush, s1_flush_coh, s1_hit_coh)
 
   XSPerfAccumulate("store_has_invalid_way_but_select_valid_way", io.replace_way.set.valid && wayMap(w => !meta_resp(w).asTypeOf(new Meta).coh.isValid()).asUInt.orR && s1_need_replacement && s1_repl_coh.isValid())
   XSPerfAccumulate("store_using_replacement", io.replace_way.set.valid && s1_need_replacement)
 
   val (s1_has_permission, s1_shrink_perm, s1_new_hit_coh) = s1_hit_coh.onAccess(s1_req.cmd)
   val s1_hit = s1_tag_match && s1_has_permission
-  val s1_isStore = !s1_req.replace && !s1_req.probe && !s1_req.miss && s1_req.isStore
-  val s1_isAMO = !s1_req.replace && !s1_req.probe && !s1_req.miss && s1_req.isAMO && s1_req.cmd =/= M_XSC
+  val s1_isStore = !s1_req.replace && !s1_req.flush && !s1_req.probe && !s1_req.miss && s1_req.isStore
+  val s1_isAMO = !s1_req.replace && !s1_req.flush && !s1_req.probe && !s1_req.miss && s1_req.isAMO && s1_req.cmd =/= M_XSC
   val s1_pregen_can_go_to_mq = (s1_isStore || s1_isAMO) && !s1_hit
   val s1_grow_perm = s1_shrink_perm === BtoT && !s1_has_permission
 
@@ -476,7 +511,7 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   val s2_can_go_to_mq_evict_fail = s2_replace_block // dcache and miss queue both occupy the same set, (BtoT scheme)
   val s2_can_go_to_mq_replay = s2_can_go_to_mq_no_data || s2_can_go_to_mq_evict_fail
   val s2_can_go_to_mq = RegEnable(s1_pregen_can_go_to_mq, s1_fire)
-  val s2_can_go_to_s3 = (s2_sc || s2_req.replace || s2_req.probe ||
+  val s2_can_go_to_s3 = (s2_sc || s2_req.replace || s2_req.flush || s2_req.probe ||
     Mux(
       s2_req.miss,
       io.refill_info.valid && !s2_replace_block,
@@ -565,7 +600,10 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   val store_update_meta = s3_req.isStore && !s3_req.probe && s3_hit_coh =/= s3_new_hit_coh
   val amo_update_meta = s3_req.isAMO && !s3_req.probe && s3_hit_coh =/= s3_new_hit_coh && !s3_sc_fail
   val amo_wait_amoalu = s3_req.isAMO && s3_req.cmd =/= M_XLR && s3_req.cmd =/= M_XSC && !isAMOCAS(s3_req.cmd)
-  val update_meta = (miss_update_meta || probe_update_meta || store_update_meta || amo_update_meta) && !s3_req.replace
+  // flush of a valid line: invalidate it (new_coh falls through to ClientMetadata.onReset = Nothing)
+  val flush_update_meta = s3_req.flush && s3_coh.state =/= ClientStates.Nothing
+  val update_meta = (miss_update_meta || probe_update_meta || store_update_meta || amo_update_meta || flush_update_meta) &&
+    !s3_req.replace
 
   def missCohGen(cmd: UInt, param: UInt, dirty: Bool) = {
     val c = categorize(cmd)
@@ -729,12 +767,13 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   val miss_wb = s3_req.miss && s3_need_replacement && s3_coh.state =/= ClientStates.Nothing
   val probe_wb = s3_req.probe
   val replace_wb = s3_req.replace
-  val need_wb = miss_wb || probe_wb || replace_wb
+  val flush_wb = s3_req.flush && s3_coh.state =/= ClientStates.Nothing
+  val need_wb = miss_wb || probe_wb || replace_wb || flush_wb
 
   val writeback_param = Mux(probe_wb, probe_shrink_param, miss_shrink_param)
   val writeback_data = if (dcacheParameters.alwaysReleaseData) {
     s3_tag_match && s3_req.probe && s3_req.probe_need_data ||
-      s3_coh === ClientStates.Dirty || (miss_wb || replace_wb) && s3_coh.state =/= ClientStates.Nothing
+      s3_coh === ClientStates.Dirty || (miss_wb || replace_wb || flush_wb) && s3_coh.state =/= ClientStates.Nothing
   } else {
     s3_tag_match && s3_req.probe && s3_req.probe_need_data || s3_coh === ClientStates.Dirty
   }
@@ -750,7 +789,10 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
     io.wb.ready
   val s3_replace_nothing = s3_req.replace && s3_coh.state === ClientStates.Nothing
   val s3_replace_can_go = s3_req.replace && (s3_replace_nothing || io.wb.ready)
-  val s3_can_go = s3_probe_can_go || s3_store_can_go || s3_amo_can_go || s3_miss_can_go || s3_replace_can_go
+  // flush: an invalid way finishes at once; a valid one needs the writeback queue and the meta write port
+  val s3_flush_can_go = s3_req.flush && (!flush_wb || io.wb.ready && io.meta_write.ready)
+  val s3_can_go = s3_probe_can_go || s3_store_can_go || s3_amo_can_go || s3_miss_can_go || s3_replace_can_go ||
+    s3_flush_can_go
   val s3_update_data_cango = s3_store_can_go || s3_amo_can_go || s3_miss_can_go // used to speed up data_write gen
   val s3_fire = s3_valid && s3_can_go
   when (s2_fire_to_s3) {
@@ -904,6 +946,7 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   // io.replace_resp.bits := s3_req.miss_id
 
   io.meta_write.valid := s3_fire && update_meta
+  io.flush_resp := s3_fire && s3_req.flush
   io.meta_write.bits.idx := s3_idx
   io.meta_write.bits.way_en := s3_way_en
   io.meta_write.bits.meta.coh := new_coh
@@ -934,8 +977,8 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   XSPerfAccumulate("mainpipe_slot_conflict_1_2", (s1_idx === s2_idx && s1_way_en === s2_way_en && s1_req.miss && s2_req.miss && s1_valid && s2_valid ))
   XSPerfAccumulate("mainpipe_slot_conflict_1_3", (s1_idx === s3_idx && s1_way_en === s3_way_en && s1_req.miss && s3_req.miss && s1_valid && s3_valid))
   XSPerfAccumulate("mainpipe_slot_conflict_2_3", (s2_idx === s3_idx && s2_way_en === s3_way_en && s2_req.miss && s3_req.miss && s2_valid && s3_valid))
-  // probe / replace will not update access bit
-  io.access_flag_write.valid := s3_fire && !s3_req.probe && !s3_req.replace
+  // probe / replace / flush will not update access bit
+  io.access_flag_write.valid := s3_fire && !s3_req.probe && !s3_req.replace && !s3_req.flush
   io.access_flag_write.bits.idx := s3_idx
   io.access_flag_write.bits.way_en := s3_way_en
   // io.access_flag_write.bits.flag := true.B
@@ -984,6 +1027,8 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   io.wb.valid := s3_valid && (
     // replace
     s3_req.replace && !s3_replace_nothing ||
+    // flush: the line is invalidated in the same cycle (meta write)
+    s3_req.flush && io.meta_write.ready ||
     // probe can go to wbq
     s3_req.probe && (io.meta_write.ready || !probe_update_meta) ||
       // amo miss can go to wbq
@@ -996,7 +1041,7 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
 
   io.wb.bits.addr := get_block_addr(Cat(s3_tag, get_untag(s3_req.vaddr)))
   io.wb.bits.param := writeback_param
-  io.wb.bits.voluntary := s3_req.miss || s3_req.replace
+  io.wb.bits.voluntary := s3_req.miss || s3_req.replace || s3_req.flush
   io.wb.bits.hasData := writeback_data && !s3_tag_error_wb
   io.wb.bits.dirty := s3_coh === ClientStates.Dirty
   io.wb.bits.data := s3_data.asUInt
@@ -1067,7 +1112,7 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
   io.error.bits.source.l2 := s3_flag_error_beu.asUInt.orR || s3_l2_error_beu.asUInt.orR
   io.error.bits.opType.store := RegEnable(s2_req.isStore && !s2_req.probe, s2_fire)
   io.error.bits.opType.probe := RegEnable(s2_req.probe, s2_fire)
-  io.error.bits.opType.release := RegEnable(s2_req.replace, s2_fire)
+  io.error.bits.opType.release := RegEnable(s2_req.replace || s2_req.flush, s2_fire)
   io.error.bits.opType.atom := RegEnable(s2_req.isAMO && !s2_req.probe, s2_fire)
 
   val perfEvents = Seq(

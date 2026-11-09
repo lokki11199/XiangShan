@@ -164,7 +164,20 @@ trait HasCoreLowPowerImp[+L <: HasXSTile] { this: BaseXSSocImp with HasXSTileCHI
       val debugIntr = withClockAndReset(clock, cpuReset_sync) {AsyncResetSynchronizerShiftReg(debug.head(0), 3, 0)}
       val msi_info_vld = withClockAndReset(clock, cpuReset_sync) {AsyncResetSynchronizerShiftReg(core_with_l2.module.io.msiInfo.valid, 3, 0)}
       val intSrc = Cat(msip, mtip, meip, seip, nmi_31, nmi_43, debugIntr, msi_info_vld)
-      wfiState := withClockAndReset(clock, cpuReset_sync){WfiStateNext(wfiState, isWFI, isNormal, flitpend, false.B)}
+      // A core-only reset needs the Core+L2 clock (the drain runs on it, and Probes are served while the
+      // request is held: by the DCache, or by the gate in front of it): a request wakes the gated clock
+      // like a flit and keeps it from being gated again until the sequence is over.
+      val coreResetReq = if (socParams.EnableCoreReset) {
+        tileio.debug_reset.get || tileio.hartResetReq || tileio.core_reset_req.get
+      } else false.B
+      val coreResetWake = withClockAndReset(clock, cpuReset_sync) {
+        AsyncResetSynchronizerShiftReg(
+          coreResetReq || core_with_l2.module.io.core_reset_busy.getOrElse(false.B),
+          3, 0)
+      }
+      wfiState := withClockAndReset(clock, cpuReset_sync){
+        WfiStateNext(wfiState, isWFI && !coreResetWake, isNormal, flitpend || coreResetWake, false.B)
+      }
       wfiGateClock := (wfiState === sGCLOCK)
     }else {
       wfiGateClock := false.B
@@ -246,6 +259,11 @@ trait HasXSTileImp[+L <: HasXSTile] { this: BaseXSSocImp with HasAsyncClockImp =
     val riscv_rst_vec = Input(UInt(socParams.soc.PAddrBits.W))
     val riscv_rst_mtvec = Option.when(socParams.tiles.head.enableResetMtvec)(Input(UInt(socParams.soc.PAddrBits.W)))
     val nodeID = Input(UInt(socParams.soc.NodeIDWidthList(socParams.issue).W))
+    // reset of XSCore alone, L2 and CHI keep running (see XSTileWrap, CoreReset.scala):
+    // debug_reset from the Debug Module (ndmreset / hartreset), core_reset_req from the cluster
+    val debug_reset = Option.when(socParams.EnableCoreReset)(Input(Bool()))
+    val core_reset_req = Option.when(socParams.EnableCoreReset)(Input(Bool()))
+    val core_reset_busy = Option.when(socParams.EnableCoreReset)(Output(Bool()))
   }).suggestName("io")
 
   // core IO connection
@@ -259,6 +277,9 @@ trait HasXSTileImp[+L <: HasXSTile] { this: BaseXSSocImp with HasAsyncClockImp =
   core_with_l2.module.io.reset_vector := tileio.riscv_rst_vec
   core_with_l2.module.io.reset_mtvec.foreach(_ := tileio.riscv_rst_mtvec.get)
   core_with_l2.module.io.hartId := tileio.hartId
+  core_with_l2.module.io.debug_reset.foreach(_ := tileio.debug_reset.get)
+  core_with_l2.module.io.core_reset_req.foreach(_ := tileio.core_reset_req.get)
+  tileio.core_reset_busy.foreach(_ := core_with_l2.module.io.core_reset_busy.get)
   core_with_l2.module.io.nodeID.get := tileio.nodeID
 
   /* dft */

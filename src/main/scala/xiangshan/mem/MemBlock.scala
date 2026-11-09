@@ -369,6 +369,10 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
     }
 
     val wfi = Flipped(new WfiReqBundle)
+    // L1 DCache quiesce before a reset of XSCore alone (from XSTile, see CoreReset.scala)
+    val l1_quiesce = Flipped(new L1QuiesceIO)
+    // tile reset for the L1 DCache arrays that survive a reset of XSCore alone (CoreResetKeepL1)
+    val l1_meta_reset = Option.when(p(SoCParamsKey).EnableCoreReset && p(SoCParamsKey).CoreResetKeepL1)(Input(AsyncReset()))
 
     val topDownInfo = new Bundle {
       val fromL2Top = Input(new TopDownFromL2Top)
@@ -633,6 +637,8 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
 
   dcache.io.lqEmpty := lsq.io.lqEmpty
   dcache.io.wfi.wfiReq := io.wfi.wfiReq
+  dcache.io.quiesce <> io.l1_quiesce
+  dcache.io.metaReset.foreach(_ := io.l1_meta_reset.get)
   lsq.io.wfi.wfiReq := io.wfi.wfiReq
 
   // load/store prefetch to l2 cache

@@ -322,6 +322,8 @@ class WritebackQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModu
     // 5 miss_req to check: 3*LoadPipe + 1*MainPipe + 1*missReqArb_out
     val miss_req_conflict_check = Vec(LoadPipelineWidth + 2, Flipped(Valid(UInt())))
     val block_miss_req = Vec(LoadPipelineWidth + 2, Output(Bool()))
+    // no Release / ProbeAck in progress: every voluntary Release got its ReleaseAck (DCacheFlushUnit)
+    val empty = Output(Bool())
   })
 
   require(cfg.nReleaseEntries > cfg.nMissEntries)
@@ -384,6 +386,8 @@ class WritebackQueue(edge: TLEdgeOut)(implicit p: Parameters) extends DCacheModu
   io.block_miss_req.zipWithIndex.foreach{ case(blk, i) =>
     blk := io.miss_req_conflict_check(i).valid && miss_req_conflict(i)
   }
+
+  io.empty := !Cat(entries.map(_.io.block_addr.valid)).orR
 
   TLArbiter.robin(edge, io.mem_release, entries.map(_.io.mem_release):_*)
 

@@ -35,6 +35,7 @@ import xiangshan.backend.trace.TraceCoreInterface
 import xiangshan.mem._
 import xiangshan.cache.mmu._
 import xiangshan.cache.mmu.TlbRequestIO
+import xiangshan.cache.L1QuiesceIO
 import scala.collection.mutable.ListBuffer
 
 abstract class XSModule(implicit val p: Parameters) extends Module
@@ -117,6 +118,10 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
     })
     val dft = Option.when(hasDFT)(Input(new SramBroadcastBundle))
     val dft_reset = Option.when(hasDFT)(Input(new DFTResetSignals()))
+    // L1 DCache quiesce before a reset of XSCore alone (driven by XSTile)
+    val l1_quiesce = Flipped(new L1QuiesceIO)
+    // tile reset for the L1 DCache arrays that survive a reset of XSCore alone (CoreResetKeepL1)
+    val l1_meta_reset = Option.when(p(SoCParamsKey).EnableCoreReset && p(SoCParamsKey).CoreResetKeepL1)(Input(AsyncReset()))
   })
 
   dontTouch(io.l2_flush_done)
@@ -208,6 +213,8 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
   }
   memBlock.io.hartId := io.hartId
   memBlock.io.l2_flush_done := io.l2_flush_done
+  memBlock.io.l1_quiesce <> io.l1_quiesce
+  memBlock.io.l1_meta_reset.foreach(_ := io.l1_meta_reset.get)
   memBlock.io.outer_reset_vector := io.reset_vector
   memBlock.io.fromTopToBackend.reset_mtvec.foreach(_ := io.reset_mtvec.get)
   memBlock.io.outer_hc_perfEvents := io.perfEvents
