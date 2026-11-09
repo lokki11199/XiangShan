@@ -175,7 +175,7 @@ T = r'''# Сброс одного XSCore по debug reset: уровень, со�
 работают. Сброс — уровень: ядро в сбросе, пока держат запрос, и не меньше 100 тактов. Один параметр
 (`CoreResetKeepL1`) выбирает, что делать с L1D; все управляющие сигналы из домена сброса ядра изолированы на
 стороне тайла. Подробное описание: `xscore_reset_v5.pdf`. Собрано из коммита `@HEAD@` ветки `core-reset-v5`
-(база upstream c098f99).
+(база: kunminghu-v2 = 7b16188; изменённые файлы в нём и в c098f99 одинаковы).
 
 ## Что изменилось в v5
 
@@ -194,9 +194,9 @@ T = r'''# Сброс одного XSCore по debug reset: уровень, со�
   инициализации массива тегов при сбросе ядра стирал теги, хотя данные и meta оставались. Теперь теги на сбросе
   тайла, а запись в теги и данные маскируется (`freeze`) на время сброса.
 - **Конфликт имени `TLQuiesceGate` исправлен.** v4 не компилировалась (конфликт `name`); **v5 компилируется**.
-- Побочные файлы: `Probe.scala` (новый изменяемый файл: Probe на время сброса), `Bundle.scala`, `CtrlBlock.scala`,
-  `BranchUnit/JumpUnit`, TLB, фронтенд (BPU, FTB, FauFTB, ITTAGE, IFU, FTQ, RAS, Composer), LoadUnit, HybridUnit,
-  LoadQueueRAW/Uncache: сброс и флаги состояния. Полный список — `core-reset.patch`.
+- Затронутые файлы (16): `Probe.scala` (новый изменяемый файл: Probe на время сброса), `MainPipe`, `MissQueue`, `WritebackQueue`,
+  `FlushUnit` (новый), `DCacheWrapper`, `FakeDCache`, `CoreReset` (новый), `XSCore`, `XSTile`, `XSTileWrap`, `XSNoCTop`, `Top`,
+  `YamlParser`, `SoC`, `MemBlock`. Полный список — `core-reset.patch`.
 
 ## Параметр (`SoCParameters`, действует при `EnableCoreReset = true`)
 
