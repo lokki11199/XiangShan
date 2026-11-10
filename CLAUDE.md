@@ -28,6 +28,7 @@
 | 10.11.2026 | `check.sh --quick/--full`, `scripts/mill_retry.sh`, режим `QUICK=1` в run_formal.sh | c446f99 |
 | 10.11.2026 | `rtl/` отставал (только номера строк в assert) → обновлён, эквивалентность 5/5; `check.sh --quick` 4/4 PASS | 3d6dbd1 |
 | 10.11.2026 | PDF финальный (57 стр.): формальная часть k/s, check.sh, находки проверки (ж), (з) | 6d1b268 |
+| 10.11.2026 | личное окружение «XiangShan» с setup script `core-reset/setup_env.sh` (Default без скрипта); пакет собран и сверен | f8febd9 |
 
 Ревью Chisel v5 (Sonnet, 09.11.2026):
 - **critical, унаследовано от v4, KEEP:** `TagSRAMBank.rst_cnt` (домен сброса ядра) обнуляет SRAM тегов при каждом
