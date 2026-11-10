@@ -41,8 +41,8 @@
   такт); MMIO-запросы, не прошедшие гейт до sFlush, теряются со сбросом ядра (включая закоммиченный MMIO store).
 
 Окружение (облачная сессия, 4 CPU, 15 ГБ ОЗУ, ~30 ГБ диска):
-- mill 0.12.3: `/opt/mill/mill-0.12.3.jar` (Maven Central, sha1 сверен), ссылка `/usr/local/bin/mill`;
-  `.mill-jvm-opts` в корне (в .gitignore).
+- mill 0.12.3: `/opt/mill/mill-0.12.3.jar` (Maven Central, sha1 сверен), ссылка `/usr/local/bin/mill`. Установка всех инструментов — `core-reset/setup_env.sh` (setup script окружения; холодный прогон ~16 мин);
+  `.mill-jvm-opts` в корне (в .gitignore), по одной JVM-опции на строку (mill читает построчно; одной строкой — ошибка «Invalid maximum heap size»).
 - `/opt/eda` (собрано из исходников, git-теги): Verilator 5.050 (тега 5.049 нет — это промежуточная версия
   master), Yosys 0.70 (CMake: `-DYOSYS_WITHOUT_SLANG=ON -DBUILD_SHARED_LIBS=OFF`), yosys-abc, SymbiYosys 0.70;
   espresso 2.4 в `/usr/local/bin`. venv `/opt/fv`: yices 2.6.5 (решатель для smtbmc; Boolector нет).
