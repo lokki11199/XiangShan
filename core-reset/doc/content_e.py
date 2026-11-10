@@ -22,6 +22,8 @@ def section8(C):
         'L2 и CHI-порт.',
         '<b>Кластер.</b> `core_reset_req` — для контроллера сброса кластера; можно привязать к 0. Если XSTile подключён напрямую и у '
         'вас своё отключение такта: такт тайла должен идти, пока запрос или `core_reset_busy` = 1.',
+        '<b>Проверка при интеграции.</b> `core-reset/verification/check.sh --quick` (компиляция, elaboration модулей, smoke, быстрая формальная '
+        'проверка) и `--full` (полный набор) — единая точка входа (раздел 7).',
         '<b>Протокол.</b> Поднять запрос; ядро останавливается после опустошения (и обхода), сбрасывается и остаётся в сбросе, пока '
         'держат запрос (не меньше 100 тактов); после снятия запроса ядро выходит из сброса и стартует. `core_reset_busy = 0` — ядро '
         'снова работает.',
@@ -156,7 +158,8 @@ def section10(C):
         ['`core-reset/verification/model/`, `tb/`', 'модели гейтов, изоляции, контроллера, DCache и L2; тестбенч и мониторы'],
         ['`core-reset/verification/formal/`', '`fv_boundary.sv` (P1–P20, cover), `run_formal.sh`, `eq_chisel.sv`, `run_equiv.sh`'],
         ['`core-reset/verification/rtl/`, `elab/`', 'RTL модулей, вырезанный из elaboration; стенд elaboration и YAML для XSNoCTop'],
-        ['`core-reset/verification/scripts/`', '`run.sh`, `regress.sh`, `soak.sh`, `coverage.py`, `regress_summary.py`, `seedsearch.sh`, `extract_rtl.py`, `env.sh`'],
+        ['`core-reset/verification/check.sh`', 'точка входа: `--quick` / `--full`'],
+        ['`core-reset/verification/scripts/`', '`mill_retry.sh` (mill с повторами при HTTP 429 Maven Central), `run.sh`, `regress.sh`, `soak.sh`, `coverage.py`, `regress_summary.py`, `seedsearch.sh`, `extract_rtl.py`, `env.sh`'],
         ['`core-reset/verification/results_*`, `coverage_*.json`', 'результаты формальной проверки, эквивалентности, регрессии, длинных прогонов'],
         ['`core-reset/HANDOFF.md`, `CLAUDE.md`', 'требования, дизайн, ловушки, состояние работы'],
     ], [2.2, 3.7]))
