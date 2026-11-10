@@ -1,2 +1,6 @@
 ctrl_keep  bmc30: PASS 0.8s        prove: PASS 5.1s
 ctrl_sweep bmc30: PASS 0.8s        prove: PASS 1.0s
+gate_c     bmc30: PASS 82.6s       prove: PASS 3.2s
+gate_ul    bmc30: PASS 6.0s        prove: PASS 0.6s
+iso        bmc30: PASS 6.4s        prove: PASS 0.6s
+failed miters: 0
