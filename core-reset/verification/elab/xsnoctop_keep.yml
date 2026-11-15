@@ -1,0 +1,3 @@
+# core-only reset; everything else comes from XSNoCTopConfig
+EnableCoreReset: true
+CoreResetKeepL1: true
