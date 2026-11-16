@@ -81,7 +81,10 @@ if [ ! -x $OBJ/Vdcache_tb ] || [ $STALE = 1 ]; then
     { cat $OBJ/probes.log; echo "RTL CFG=$CFG CASE=$CASE SEED=$SEED CTRL=$CTRL : RESULT: FAIL ERROR no memory probes (K5 would be empty)"; exit 1; }
   mkdir -p tb_rtl/gen; cp $OBJ/inc/mem_probes.svh tb_rtl/gen/mem_probes_$T.svh
   CTLMOD=CoreResetCtrl_$T; [ $ISO2 = 1 ] && CTLMOD=${CTLMOD}_iso2
-  DUT_FILES=$(ls $D/*.sv $D/*.v 2>/dev/null | grep -v '/params.svh$')
+  # the single-file output ends with a marker and the list of inline black boxes (ClockGate.sv, whose module is in the file): cut it
+  mkdir -p $OBJ/dut
+  for f in $(ls $D/*.sv $D/*.v 2>/dev/null); do sed '/^\/\/ ----- 8< ----- FILE "firrtl_black_box_resource_files.f"/,$d' $f > $OBJ/dut/$(basename $f); done
+  DUT_FILES=$(ls $OBJ/dut/*.sv $OBJ/dut/*.v 2>/dev/null)
   if [ $MODEL = 1 ]; then CTL_FILES=model/cr_ctl_models.sv; CTL_DEF=; else CTL_FILES=rtl/$CTLMOD.sv; CTL_DEF=-DCTRL_MOD=$CTLMOD; fi
   VDEFS=$(for d in $DEFLIST; do printf -- '-D%s ' "$d"; done)
   verilator --binary --timing --assert -j ${VJ:-4} -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \
