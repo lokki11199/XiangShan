@@ -1,2 +1,5 @@
 tools: Yosys 0.70 , abc pdr, smtbmc yices
 === configuration k: KEEP (-D CFG_KEEP)
+design prove rstCycles=100 (abc pdr, unbounded): PASS  (106.69 sec)
+design prove rstCycles=16 (abc pdr, unbounded): PASS  (12.55 sec)
+design      bmc: not run (the unbounded proofs with abc pdr cover every depth; the assumptions are shown satisfiable by the covers reached)
