@@ -8,3 +8,14 @@ CTRL_MUTANT_NO_DRAIN             bmc : FAIL at cycle 4  P19_decision_after_done_
 CTRL_MUTANT_STALE_QUIET          bmc : FAIL at cycle 4  P19_decision_after_done_idle P1_reset_point_clean 
 CTRL_MUTANT_NO_L1_IDLE           bmc : FAIL at cycle 4  P19_decision_after_done_idle 
 CTRL_MUTANT_NO_ALIVE             bmc 60 clean or >300s, (pdr): FAIL at cycle 27  P22_iso_drop_after_core_up 
+CTRL_MUTANT_NO_FE_WAIT           bmc 60 clean or >300s, (pdr): FAIL at cycle 25  P20_run_only_after_frontend P22_iso_drop_after_core_up 
+CTRL_MUTANT_NO_EARLY_QUIET       bmc : FAIL at cycle 3  P10_noncoherent_quiet_in_drain 
+CTRL_MUTANT_NO_EARLY_BLOCK       bmc : FAIL at cycle 2  P9_no_new_noncoherent 
+CTRL_MUTANT_LATE_HOLDB           bmc : FAIL at cycle 3  P18_b_held_from_first_drain_cycle P8N_held_only_in_drain_iso 
+CTRL_MUTANT_NO_HOLD_IN_RELEASE   bmc : FAIL at cycle 22  P17_b_closed_when_isolated 
+CTRL_MUTANT_RESET_EARLY          bmc : FAIL at cycle 22  P13_reset_until_req_drops 
+CTRL_MUTANT_ISO_LATE             bmc : FAIL at cycle 4  P16_isolation_only_in_procedure 
+CTRL_MUTANT_ISO_EARLY_DROP       bmc : FAIL at cycle 22  P16_isolation_covers_reset P16_isolation_only_in_procedure P22_iso_drop_after_core_up 
+CTRL_MUTANT_NO_ISO_LEAD          bmc : FAIL at cycle 4  P21_iso_lead 
+CTRL_MUTANT_NO_REQ_IN_ISO        bmc : FAIL at cycle 4  P23_l1_req_through_iso 
+CTRL_MUTANT_LATE_HART_IN_RESET   bmc : FAIL at cycle 2  P11_hart_in_reset_is_busy 
