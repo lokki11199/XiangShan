@@ -1,5 +1,5 @@
 // ============================================================================
-// Behavioral models of the environment for the XSCore-only reset (L2 keeps running), v5.
+// Behavioral models of the environment for the XSCore-only reset (L2 keeps running), v6.
 //   (cr_beat, cr_gate, cr_iso, cr_ctrl: cr_ctl_models.sv; cr_dcache, cr_buf1: cr_dcache.sv)
 //   cr_ulclient  : uncached client (ICache/PTW/Uncache stand-in): Get / 2-beat PutFull
 //   cr_ulmgr     : uncached manager inside the core (ICache control registers), random outputs in reset
@@ -7,6 +7,10 @@
 //   cr_l2        : inclusive L2 with directory, HN snoops, UL responder; AcquirePerm grants no data
 //                  and leaves L2 without a valid copy (poison, TileLink 1.9.3 section 9.3.2). A Get of the UL
 //                  port to a line L1D holds in T waits for a Probe toB of L1D (as CoupledL2 does).
+//                  FULL (KEEP = 0): at the reset point the directory goes stale: every line it lists for L1D is
+//                  marked `stale` (L1D is reset and holds nothing, DESIGN 7.2 p. 2). A stale line is served as
+//                  CoupledL2 serves it: an Acquire of it is a legal re-acquire (counted), a ProbeAck NtoN for it
+//                  is legal (counted), a GrantData of poisoned data is a counter (7.2 p. 3, NtoT case), not an error.
 // Simplified TileLink: line address 4 bits, data 32 bits, data messages are 2 beats.
 //   A opcodes: 0 PutFull(2 beats) 4 Get 6 AcquireBlock 7 AcquirePerm   param(grow): 0 NtoB 1 NtoT 2 BtoT
 //   B opcode : Probe                                      param(cap) : 0 toT 1 toB 2 toN
@@ -143,8 +147,9 @@ endmodule
 
 
 // ---------------------------------------------------------------------------
-module cr_l2 (
+module cr_l2 #(parameter bit KEEP = 1) (
   input  logic clk, rst,
+  input  logic rp_full,                // reset point of a core reset with FULL: the directory goes stale (ignored with KEEP)
   input  logic snoop_en,               // HN snoops to the tile
   input  logic slow,                   // long and random latencies, ready stalls, gaps between beats
   // forced snoop (directed tests): a Probe of this line as soon as possible
@@ -171,7 +176,9 @@ module cr_l2 (
   // state for checks
   output logic [1:0]  dir [16], output logic [31:0] mem [16],
   output logic        busy_core, output int n_snoop_l2only, output int n_probe, output int n_perm, output int n_spur,
-  output int          n_get_probe        // Gets of the UL port that waited for a Probe toB of L1D
+  output int          n_get_probe,       // Gets of the UL port that waited for a Probe toB of L1D
+  output logic [15:0] stale_o, output logic [15:0] poison_o,   // FULL: directory entries of lines L1D lost; AcquirePerm poison
+  output int          n_reacq_stale, n_nton_stale, n_foreign_grant
 );
   localparam logic [1:0] N = 2'd0, B = 2'd1, T = 2'd2;
   // acquire handling (one at a time)
@@ -242,13 +249,14 @@ module cr_l2 (
   // a Probe that is not sent yet is not a transaction with the core (it may wait while the core is in reset)
   // lines whose L2 copy is not valid after an AcquirePerm (until the client writes them back with data); a
   // separate flag, not a data pattern: random store data may look like any pattern
-  logic [15:0] poison;
+  logic [15:0] poison; logic [15:0] stale;
+  assign stale_o = stale; assign poison_o = poison;
   assign busy_core = acq_v || (prb_v && prb_sent) || ra_v[0] || ra_v[1] || ra_v[2] || ra_v[3] || ul_v[0] || ul_v[1] || c_beat || ula_beat;
 
   always_ff @(posedge clk) begin
     if (rst) begin
       for (int i = 0; i < 16; i++) begin dir[i] <= N; mem[i] <= 32'h1000 + i; end
-      poison <= '0;
+      poison <= '0; stale <= '0; n_reacq_stale <= 0; n_nton_stale <= 0; n_foreign_grant <= 0;
       acq_v <= 1'b0; acq_perm <= 1'b0; gnt_send <= 1'b0; gnt_beat <= 1'b0; gnt_wait_e <= 1'b0; gnt_delay <= 0; n_perm <= 0;
       prb_v <= 1'b0; prb_sent <= 1'b0;
       for (int i = 0; i < 4; i++) ra_v[i] <= 1'b0;
@@ -257,6 +265,7 @@ module cr_l2 (
       ul_np[0] <= 1'b0; ul_np[1] <= 1'b0; n_get_probe <= 0;
     end else begin
       fsnp_ack <= 1'b0; fsnp_l2only <= 1'b0;
+      if (rp_full && !KEEP) for (int i = 0; i < 16; i++) if (dir[i] != N) stale[i] <= 1'b1;
       if (gnt_gap > 0) gnt_gap <= gnt_gap - 1;
       if (uld_gap > 0) uld_gap <= uld_gap - 1;
       for (int i = 0; i < 4; i++) if (ra_v[i] && ra_dly[i] > 0) ra_dly[i] <= ra_dly[i] - 1;
@@ -268,9 +277,10 @@ module cr_l2 (
         if (a_op == 3'd7 && a_param != 2'd1) $error("[%0t] L2: AcquirePerm without NtoT", $time);
         // (an Acquire may overtake the ProbeAck of the same line, which is still in the L1D buffer of channel C:
         // CoupledL2 accepts that; the directory is updated by the ProbeAck)
-        if (dir[a_addr] != N && !(a_op == 3'd6 && a_param == 2'd2 && dir[a_addr] == B) &&
+        if (dir[a_addr] != N && !stale[a_addr] && !(a_op == 3'd6 && a_param == 2'd2 && dir[a_addr] == B) &&
             !(prb_v && prb_sent && prb_addr == a_addr))
           $error("[%0t] L2: Acquire (op %0d grow %0d) of line %0d that the client already holds (%0d): it lost the line?", $time, a_op, a_param, a_addr, dir[a_addr]);
+        if (stale[a_addr]) begin stale[a_addr] <= 1'b0; n_reacq_stale <= n_reacq_stale + 1; end   // served as a hit (DESIGN 7.2 p. 2)
         acq_v <= 1'b1; acq_perm <= a_op == 3'd7; acq_addr <= a_addr; acq_grow <= a_param; acq_src <= a_src; gnt_send <= 1'b0; gnt_wait_e <= 1'b0;
       end
       // start the grant once no probe is outstanding on that line
@@ -288,7 +298,12 @@ module cr_l2 (
         end else if (d_isgnt) begin
           if (!gnt_beat) begin
             gnt_beat <= 1'b1; gnt_gap <= slow ? $urandom_range(0, 8) : 0;
-            if (poison[acq_addr]) $error("[%0t] L2: GrantData of line %0d with data L2 does not hold (AcquirePerm, the client lost its dirty copy)", $time, acq_addr);
+            if (poison[acq_addr]) begin
+              // FULL: L1D was reset with a line it got by AcquirePerm; L2 serves what its data array holds (DESIGN 7.2
+              // p. 3): counted. KEEP: the client holds the dirty copy, this must not happen
+              if (KEEP) $error("[%0t] L2: GrantData of line %0d with data L2 does not hold (AcquirePerm, the client lost its dirty copy)", $time, acq_addr);
+              else n_foreign_grant <= n_foreign_grant + 1;
+            end
           end
           else begin gnt_beat <= 1'b0; gnt_send <= 1'b0; gnt_wait_e <= 1'b1; dir[acq_addr] <= (gnt_cap == 2'd0) ? T : B; end
         end else ra_v[ra_sel] <= 1'b0;
@@ -322,6 +337,8 @@ module cr_l2 (
             if (!(prb_v && prb_sent && prb_addr == c_addr)) $error("[%0t] L2: unexpected ProbeAck", $time);
             prb_v <= 1'b0; prb_sent <= 1'b0;
             for (int i = 0; i < 2; i++) if (ul_np[i] && ul_npa[i] == c_addr) ul_np[i] <= 1'b0;
+            if (c_param == 3'd5 && dir[c_addr] != N && stale[c_addr]) n_nton_stale <= n_nton_stale + 1;   // FULL: NtoN for a line the directory lists
+            stale[c_addr] <= 1'b0;
             if (c_param == 3'd1 || c_param == 3'd2 || c_param == 3'd5) dir[c_addr] <= N;
             else if (c_param == 3'd0 || c_param == 3'd4) dir[c_addr] <= (dir[c_addr] == N) ? N : B;
           end

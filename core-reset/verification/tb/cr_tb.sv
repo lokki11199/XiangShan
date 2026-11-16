@@ -1,18 +1,21 @@
 // ============================================================================
-// cr_tb (v5): XSCore-only reset. DCache + uncached clients (core domain, reset by the core reset)
-//   <-> TLQuiesceGates <-> L2 (never reset); CoreResetCtrl sequences flush/drain/reset/release.
+// cr_tb (v6): XSCore-only reset. DCache + uncached clients (core domain, reset by the core reset)
+//   <-> TLQuiesceGates <-> L2 (never reset); CoreResetCtrl sequences quiesce/drain/isolate/reset/release.
 //   Between the DCache and its gate: one-entry buffers on B and C in the core reset domain (l1d_to_l2_buffer of
 //   MemBlock). A second uncached client of the core reaches a manager inside the core (ICache control
 //   registers) through its gate, a tile buffer (MMIO crossbar of L2Top) and TLResetIsolation. The two uncached
-//   gates are "early": channel A closed from the first cycle of sFlush.
+//   gates are "early": channel A closed from the first cycle of sQuiesce.
 //   The frontend leaves reset 4 cycles after the rest of the core (fe_rst, ResetGen chain); the controller
 //   waits for it in sRelease.
-//   Every core-side model drives random outputs (and random array writes) for 1..4 cycles right after the
+//   Every core-side model drives random outputs (and random array enables) for 1..4 cycles right after the
 //   core reset is asserted: the isolation of the tile side must keep that away from L2 and from the arrays
 //   that survive the reset (reset domain crossing).
-//   Configuration: CFG_SWEEP (CoreResetKeepL1 = false: L1D releases every line before the reset and is reset
-//   with the core; Probes answered NtoN by the gate during the reset). The reset is a level: the core stays in
-//   reset while the request is high (at least rstCycles).
+//   Configurations (defines): default = FULL (CoreResetKeepL1 = false: no walk over the lines; L1D is reset with
+//   the core and is empty afterwards, dirty lines are lost and L2's directory goes stale; Probes offered while the
+//   core is in reset are answered NtoN by the gate; the golden memory follows L2 for the lost lines and is
+//   undefined for the lines L2 holds foreign data for, DESIGN 7.2: counters full.*); CFG_KEEP (meta, error flags and
+//   tags survive, freeze masks the arrays, Probes are held in L2 while the core is in reset); ISO2 (isoCycles = 2).
+//   The reset is a level: the core stays in reset while the request is high (at least rstCycles).
 //   L2 sends now and then a Probe of a line its directory lists as N (+NOSPUR: never); store misses that
 //   overwrite a whole line use AcquirePerm (L2 has no valid copy afterwards: poison); a Get of the UL port to a
 //   line L1D holds in T waits for a Probe toB of L1D (CoupledL2).
@@ -20,31 +23,45 @@
 //   +SCEN=2  12 back-to-back core resets with random gaps
 //   +SCEN=3  request of random length (2..2000 cycles: the core is held in reset), x4
 //   +SCEN=4  naive core reset without the sequence (reproduces the problem; errors expected)
-//   +SCEN=5  directed: the procedure starts exactly while a transaction of class C1..C12 is in flight
-//            (cr_txmon classes C1..C10, C11 MSHR with an unsent Acquire, C12 Probe offered in this cycle)
-//   +SCEN=6  directed Probes of L1D lines (dirty / clean T / B, toN / toB), six cases: 0 offered in sReset,
-//            1 in sRelease, 2 right after the sequence, 3 at the start of sFlush, 4 in the first cycle of sDrain,
-//            5 in the last cycle of sFlush (taken by the gate, sDrain waits for its ProbeAck)
+//   +SCEN=5  directed: the procedure starts exactly while a transaction of class C1..C15 is in flight
+//            (cr_txmon classes C1..C10, C11 MSHR with an unsent Acquire, C12 Probe offered in this cycle,
+//            C13 a load looks up the arrays, C14 CBO in flight (not modelled: SKIPPED), C15 Probe offered in the
+//            decision cycle)
+//   +SCEN=6  directed Probes of L1D lines (dirty / clean T / B, toN / toB), nine cases: 0 offered in sReset,
+//            1 in sRelease, 2 right after the sequence, 3 at the start of sQuiesce, 4 in the first cycle of sDrain,
+//            5 in the last cycle of sQuiesce (taken by the gate, sDrain waits for its ProbeAck), 6 in the first
+//            cycle of sIso (ISO2: in the second), 7 in the decision cycle, 8 in the coreUp cycle (last of sRelease)
 //   +SCEN=7  debug reset held for a long time (2000..20000 cycles, like ndmreset / hartreset held by a
 //            debugger) with HN snoops and directed snoops during the hold (KEEP: one Probe of a hot line waits in
-//            L2 until the request drops; sweep: snoops of swept lines answered NtoN by the gate at once)
-//   +SLOW    long random latencies in L2, ready stalls, gaps between beats (default in SCEN 5, 6, 7)
-// Checks at every reset point and when the core leaves reset: no transaction outstanding in L2 for the core;
-// the DCache control logic is empty (busy_true) and so are the B / C buffers; L2's directory matches the DCache
-// meta line by line, exactly (sweep: L1D is empty and L2 lists nothing at the reset point); the current data of
-// every line (DCache if dirty, else L2) == golden memory. No new non-coherent request after the start of the
-// sequence, nothing non-coherent open in sDrain, no Probe crosses the gate in sDrain; the core leaves reset only
-// after the request dropped and the sequence ends only with the frontend out of reset; one core reset per
-// request. During the reset nothing crosses to or from the core on any channel, with KEEP the DCache meta must
-// not change; a Probe never waits more than 200 cycles (KEEP: outside the reset). Every load hit is checked
-// against the golden memory, every uncached response by its client. At the end: global consistency, no hang.
+//            L2 until the request drops; FULL: snoops of lines L1D lost answered NtoN by the gate at once)
+//   +SCEN=8  sequences in a row: the request dropped in sReset and raised again (a) in sRelease before coreUp,
+//            (b) exactly in the coreUp cycle, (c) one cycle after sIdle (the ordinary gap), (d) never dropped
+//   +SCEN=9  the request dropped / raised in every state: one-cycle pulse in sIdle; drop in sQuiesce, sDrain, sIso,
+//            sReset (before and after rstCycles), sRelease; raised again in sReset before rstCycles
+//   +SLOW    long random latencies in L2, ready stalls, gaps between beats (default in SCEN 5..9)
+// Checks S1..S23 of core-reset/verification/TESTPLAN.md 4.2 (numbers in the messages where they apply).
+// At every reset point and when the core leaves reset: no transaction outstanding in L2 for the core; the
+// DCache control logic is empty (busy_true) and so are the B / C buffers; L2's directory matches the DCache meta
+// line by line, exactly (at the reset point, both configurations); the current data of every line (DCache if
+// dirty, else L2) == golden memory (FULL: where golden_valid). No new non-coherent request after the start of the
+// sequence, nothing non-coherent open in sDrain, no Probe crosses the gate in sDrain and sIso; the core leaves
+// reset only after the request dropped and the sequence ends only with the frontend out of reset; one core reset
+// per request. During sIso, sReset and sRelease nothing crosses to or from the core on any channel; with KEEP no
+// array access gets through while isolated; a Probe never waits more than 200 cycles (KEEP: outside the reset).
+// Every load hit is checked against the golden memory, every uncached response by its client. At the end:
+// global consistency, no hang.
 // ============================================================================
 `timescale 1ns/1ps
 module cr_tb;
-`ifdef CFG_SWEEP
-  localparam bit KEEP = 0;
-`else
+`ifdef CFG_KEEP
   localparam bit KEEP = 1;
+`else
+  localparam bit KEEP = 0;
+`endif
+`ifdef ISO2
+  localparam int ISO = 2;
+`else
+  localparam int ISO = 1;
 `endif
 `ifdef RST16
   localparam int RST_CYCLES = 16;
@@ -63,7 +80,7 @@ module cr_tb;
   logic fsnp_req, fsnp_ack, fsnp_l2only; logic [3:0] fsnp_addr; logic [1:0] fsnp_param;
   int   fsnp_arm;                                    // SCEN 6: snoop started by a trigger (cases 3, 4, 5)
   logic fsnp_trig, fsnp_hold; wire fsnp_v = fsnp_req || fsnp_trig || fsnp_hold;   // a triggered snoop stays requested until L2 starts it
-  logic spur_en; wire fsnp_force = !KEEP;   // sweep: L2 lists nothing after the sweep, the directed Probes are sent anyway
+  logic spur_en; wire fsnp_force = !KEEP;   // FULL: the directory may list nothing for a line (stale or lost), the directed Probes are sent anyway
 
   // core reset: tile reset OR sequencer reset OR forced (naive), released 2 cycles later (synchroniser)
   logic ctl_core_reset; logic crst_q1 = 1'b1, crst_q2 = 1'b1;
@@ -99,18 +116,25 @@ module cr_tb;
   logic [2:0] ua_op, ud_op, ma_op, md_op; logic [1:0] ua_par, ma_par; logic [3:0] ua_src, ua_addr, ud_src, ma_src, ma_addr, md_src;
   logic [31:0] ua_dat, ud_dat, ma_dat, md_dat;
   logic gold_we, gold_we2; logic [3:0] gold_addr, gold_addr2; logic [31:0] gold_data, gold_data2;
-  logic flush_req, flush_done, flush_idle, dc_busy_true, gate_block, early_block, busy, in_reset;
+  logic quiesce_req, quiesce_done, quiesce_idle, dc_busy_true, gate_block, early_block, busy, in_reset;
   logic hart_in_reset, l1_freeze, dc_alive, hold_probe, ack_probe, quiet0, quiet1, isolate; logic [2:0] ctl_st;
   logic g0_ack_pend, b_gate, c_gate, probe_closed;
   logic lh_v; logic [3:0] lh_addr; logic [31:0] lh_data;   // load hits
   int n_dc, n_ul, n_ul2, n_mgr;
   logic [1:0] dir [16]; logic [31:0] mem [16]; logic l2_busy; int n_l2only, n_probe, n_perm, n_spur, n_get_probe;
   logic [31:0] golden [16];
+  logic core_rst_q; logic [2:0] st_q = 3'd0, st_qq = 3'd0; logic core_rst_q_ctl;
+  always_ff @(posedge clk) core_rst_q_ctl <= ctl_core_reset;
+  logic [15:0] gv;                                   // golden value defined (FULL: not for lines L2 holds foreign data for)
+  wire rp_now = !sys_rst && core_rst && !core_rst_q && ctl_core_reset;   // reset point: first cycle of a sequencer reset
+  logic [15:0] stale, poison; int n_reacq_stale, n_nton_stale, n_foreign_grant;
+  logic arr_access, ev_store, ev_miss, ld_try; int n_lc, n_gm;
 
-  // the core runs no instruction from its reset until the sequence ends (the instruction fetch needs channel A
-  // of the ICache, closed until then): no load or store reaches the DCache
-  cr_dcache #(.KEEP(KEEP), .GARBAGE(GARBAGE)) u_dc (.clk, .rst(core_rst), .meta_rst, .traffic_en(traffic_en && !core_rst && !hart_in_reset), .slow(slow_en),
-    .flush_req, .freeze(l1_freeze), .flush_done, .flush_idle, .alive(dc_alive), .busy_true(dc_busy_true),
+  // the core runs no instruction while it is in reset; loads and stores come from the first cycle after it (v6: not
+  // gated by hartInReset, the loads must run on in sQuiesce, sDrain and sIso for the freeze to have something to clamp)
+  cr_dcache #(.KEEP(KEEP), .GARBAGE(GARBAGE)) u_dc (.clk, .rst(core_rst), .meta_rst, .traffic_en(traffic_en && !core_rst), .slow(slow_en),
+    .quiesce_req, .freeze(l1_freeze), .quiesce_done, .quiesce_idle, .alive(dc_alive), .busy_true(dc_busy_true),
+    .arr_access, .ev_store, .ev_miss, .ld_try, .n_loads_clamped(n_lc), .n_garbage_masked(n_gm),
     .ld_v(lh_v), .ld_addr(lh_addr), .ld_data(lh_data),
     .a_valid(ca_v), .a_ready(ca_r), .a_op(ca_op), .a_param(ca_par), .a_src(ca_src), .a_addr(ca_addr), .a_data(ca_dat),
     .b_valid(db_v), .b_ready(db_r), .b_param(db_par), .b_addr(db_addr),
@@ -214,7 +238,7 @@ module cr_tb;
     .od_valid(md_v), .od_ready(md_r), .od_op(md_op), .od_param(2'd0), .od_src(md_src), .od_sink(4'd0), .od_data(md_dat),
     .oe_valid(g1_oev), .oe_ready(1'b1), .oe_sink(g1_oes));
 
-  cr_l2 u_l2 (.clk, .rst(sys_rst), .snoop_en, .slow(slow_en), .fsnp_v, .fsnp_addr, .fsnp_param, .fsnp_force, .fsnp_ack,
+  cr_l2 #(.KEEP(KEEP)) u_l2 (.clk, .rst(sys_rst), .rp_full(rp_now && !KEEP), .snoop_en, .slow(slow_en), .fsnp_v, .fsnp_addr, .fsnp_param, .fsnp_force, .fsnp_ack,
     .fsnp_l2only, .spur_en,
     .core_in_reset(core_rst && !sys_rst), .b_to_gate(b_gate),
     .a_valid(la_v), .a_ready(la_r), .a_op(la_op), .a_param(la_par), .a_src(la_src), .a_addr(la_addr), .a_data(la_dat),
@@ -224,26 +248,27 @@ module cr_tb;
     .e_valid(le_v), .e_ready(le_r), .e_sink(le_sink),
     .ua_valid(ma_v), .ua_ready(ma_r), .ua_op(ma_op), .ua_src(ma_src), .ua_addr(ma_addr), .ua_data(ma_dat),
     .ud_valid(md_v), .ud_ready(md_r), .ud_op(md_op), .ud_src(md_src), .ud_data(md_dat),
-    .dir, .mem, .busy_core(l2_busy), .n_snoop_l2only(n_l2only), .n_probe, .n_perm, .n_spur, .n_get_probe);
+    .dir, .mem, .busy_core(l2_busy), .n_snoop_l2only(n_l2only), .n_probe, .n_perm, .n_spur, .n_get_probe,
+    .stale_o(stale), .poison_o(poison), .n_reacq_stale, .n_nton_stale, .n_foreign_grant);
 
-  cr_ctrl #(.KEEP(KEEP), .RST_CYCLES(RST_CYCLES)) u_ctl (.clk, .rst(sys_rst), .req, .busy, .in_reset, .hart_in_reset,
-    .l1_flush_req(flush_req), .l1_freeze, .l1_flush_done(flush_done), .l1_idle(flush_idle), .l1_alive(dc_alive),
+  cr_ctrl #(.KEEP(KEEP), .RST_CYCLES(RST_CYCLES), .ISO_CYCLES(ISO)) u_ctl (.clk, .rst(sys_rst), .req, .busy, .in_reset, .hart_in_reset,
+    .l1_req(quiesce_req), .l1_freeze, .l1_done(quiesce_done), .l1_idle(quiesce_idle), .l1_alive(dc_alive),
     .core_in_reset(fe_rst), .early_block, .gate_block, .hold_probe, .ack_probe,
     .early_quiet(quiet1 && quiet2), .gates_quiet(quiet0 && quiet1 && quiet2 && iso_quiet), .isolate,
     .core_reset(ctl_core_reset), .st(ctl_st));
-  // a B beat accepted from L2 is taken by the gate (sweep, core in reset); a C beat to L2 comes from the gate
+  // a B beat accepted from L2 is taken by the gate (FULL, core in reset); a C beat to L2 comes from the gate
   assign b_gate = u_g0.g_bce.take_b;
   assign c_gate = g0_ack_pend;
   assign probe_closed = hold_probe || ack_probe;
-  localparam logic [2:0] S_IDLE = 3'd0, S_FLUSH = 3'd1, S_DRAIN = 3'd2, S_RESET = 3'd3, S_RELEASE = 3'd4;
+  localparam logic [2:0] S_IDLE = 3'd0, S_QUIESCE = 3'd1, S_DRAIN = 3'd2, S_ISO = 3'd3, S_RESET = 3'd4, S_RELEASE = 3'd5;
 
   // ---------------- independent monitors (L2 side) ----------------
-  wire s_flush = ctl_st == S_FLUSH, s_drain = ctl_st == S_DRAIN, s_release = ctl_st == S_RELEASE;
+  wire s_quiesce = ctl_st == S_QUIESCE, s_drain = ctl_st == S_DRAIN, s_iso = ctl_st == S_ISO, s_release = ctl_st == S_RELEASE;
   logic in_reset_q; always_ff @(posedge clk) in_reset_q <= in_reset;
   wire rp_pulse = in_reset && !in_reset_q;
   logic [9:0] mon_open; int e_mon, e_sb;
-  cr_txmon u_mon (.clk, .rst(sys_rst), .start(!busy && req), .in_flush(s_flush), .in_drain(s_drain), .in_reset,
-    .in_release(s_release), .l1_done(flush_done && !core_rst), .b_gate, .c_gate,
+  cr_txmon u_mon (.clk, .rst(sys_rst), .start(!busy && req), .in_quiesce(s_quiesce), .in_drain(s_drain), .in_iso(s_iso), .in_reset,
+    .in_release(s_release), .l1_done(quiesce_done && !core_rst), .b_gate, .c_gate,
     .a_v(la_v), .a_r(la_r), .a_op(la_op), .a_src(la_src), .b_v(lb_v), .b_r(lb_r), .b_addr(lb_addr),
     .c_v(lc_v), .c_r(lc_r), .c_op(lc_op), .c_param(lc_par), .c_src(lc_src), .c_addr(lc_addr),
     .d_v(ld_v), .d_r(ld_r), .d_op(ld_op), .d_src(ld_src), .e_v(le_v), .e_r(le_r),
@@ -259,31 +284,37 @@ module cr_tb;
     if (gold_we && !core_rst && gold_addr == i) golden_now[i] = gold_data;
   end
   logic sb_ack_v, sb_ack_data; logic [3:0] sb_ack_addr; logic [31:0] sb_ack_val; logic [2:0] sb_ack_param;
-  cr_probe_sb #(.WAIT_IN_RESET(KEEP)) u_sb (.clk, .rst(sys_rst), .in_flush(s_flush), .in_drain(s_drain),
+  logic sb_ack_gate;
+  cr_probe_sb #(.WAIT_IN_RESET(KEEP)) u_sb (.clk, .rst(sys_rst), .in_quiesce(s_quiesce), .in_drain(s_drain), .in_iso(s_iso),
     .in_reset, .in_release(s_release), .busy, .rp(rp_pulse), .rp_keep(KEEP), .c_gate,
     .b_v(lb_v), .b_r(lb_r), .b_param(lb_par), .b_addr(lb_addr),
     .c_v(lc_v), .c_r(lc_r), .c_op(lc_op), .c_param(lc_par), .c_addr(lc_addr), .c_data(lc_dat),
     .a_fire(la_v && la_r), .a_addr(la_addr), .cb_v(gb_v), .cb_r(gb_r), .core_rst, .dc_alive,
-    .dir, .mem, .golden(golden_now), .l1(l1st),
-    .ack_v(sb_ack_v), .ack_addr(sb_ack_addr), .ack_data(sb_ack_data), .ack_val(sb_ack_val), .ack_param(sb_ack_param), .errors(e_sb));
+    .dir, .mem, .golden(golden_now), .l1(l1st), .stale, .gv,
+    .ack_v(sb_ack_v), .ack_addr(sb_ack_addr), .ack_data(sb_ack_data), .ack_val(sb_ack_val), .ack_param(sb_ack_param), .ack_gate(sb_ack_gate), .errors(e_sb));
   // directed triggers (SCEN=5)
   always_comb begin
     trig_cond = 1'b0;
     if (trig_sel >= 1 && trig_sel <= 10) trig_cond = mon_open[trig_sel - 1];
     else if (trig_sel == 11) trig_cond = u_dc.mq_v && !u_dc.mq_sent;   // MSHR allocated, Acquire not sent yet
-    else if (trig_sel == 12) trig_cond = lb_v;                         // L2 offers a Probe in this cycle (it is accepted in the last cycle of sIdle: the DCache answers it in sFlush)
+    else if (trig_sel == 12) trig_cond = lb_v;                         // L2 offers a Probe in this cycle (it is accepted in the last cycle of sIdle: the DCache answers it in sQuiesce)
+    else if (trig_sel == 13) trig_cond = ld_try;                       // a load looks up the arrays in this cycle
   end
-  // directed snoops started by a trigger (SCEN=6): 3 the request is raised now (the Probe is offered in the first
-  // cycle of sFlush), 4 the controller leaves sFlush now (offered in the first cycle of sDrain), 5 the DCache is
-  // finishing its drain (KEEP) / sweep (the Probe may be taken in the last cycle of sFlush)
+  // directed snoops started by a trigger (SCEN=6, and C15 of SCEN=5): 3 the request is raised now (the Probe is offered
+  // in the first cycle of sQuiesce), 4 the controller leaves sQuiesce now (offered in the first cycle of sDrain), 5 the
+  // DCache is finishing its drain (the Probe may be taken in the last cycle of sQuiesce), 6 the controller takes the
+  // decision of sDrain now (offered in the first cycle of sIso; with ISO2 one cycle later: the second), 7 as 4, the
+  // Probe is then offered in the decision cycle when sDrain lasts one cycle (classified by drain_end at the offer),
+  // 8 the last cycle of the frontend reset (offered in the coreUp cycle, the last of sRelease)
   always_comb begin
     fsnp_trig = 1'b0;
     case (fsnp_arm)
       3: fsnp_trig = !busy && req;
-      4: fsnp_trig = s_flush && u_ctl.flush_end;
-      // the flush unit leaves its last waiting state now (KEEP: sDrain of the flush unit, sweep: sWait): the
-      // snoop is started now, the Probe is offered in the cycle the controller sees done
-      5: fsnp_trig = s_flush && (KEEP ? u_dc.fst == 3'd1 : u_dc.fst == 3'd3 && u_dc.inflight == 0) && u_dc.idle;
+      4: fsnp_trig = s_quiesce && u_ctl.quiesce_end;
+      5: fsnp_trig = s_quiesce && u_dc.u_q.state == 2'd1 && u_dc.q_idle;
+      6: fsnp_trig = (ISO == 2) ? (s_iso && st_q == S_DRAIN) : (s_drain && u_ctl.drain_end);
+      7: fsnp_trig = s_quiesce && u_ctl.quiesce_end;
+      8: fsnp_trig = s_release && fe_q[3] && !fe_q[2];
       default: fsnp_trig = 1'b0;
     endcase
   end
@@ -301,45 +332,57 @@ module cr_tb;
   end
 
   // ---------------- golden memory ----------------
-  logic core_rst_q;
-  wire rp_now = !sys_rst && core_rst && !core_rst_q && ctl_core_reset;
-  // every store is kept, in both configurations (sweep: L2 has the data of every line before the reset)
+  // every store is kept. FULL: at the reset point the dirty lines of L1D are lost (7.2 p. 1): the golden value of such a
+  // line becomes what L2 holds; a lost line L2 holds foreign data for (AcquirePerm poison, 7.2 p. 3) has no defined
+  // value until a store writes the whole line again (every store of the model does).
+  int n_lost_dirty = 0, n_foreign_lines = 0, n_skipped = 0;
   always_ff @(posedge clk) begin
-    if (sys_rst) for (int i = 0; i < 16; i++) golden[i] <= 32'h1000 + i;
+    if (sys_rst) begin for (int i = 0; i < 16; i++) begin golden[i] <= 32'h1000 + i; gv[i] <= 1'b1; end end
     else begin
-      if (gold_we2 && !core_rst) golden[gold_addr2] <= gold_data2;
-      if (gold_we && !core_rst) golden[gold_addr] <= gold_data;   // a later store hit wins
+      if (rp_now && !KEEP)
+        for (int i = 0; i < 16; i++)
+          if (l1st[i] == 2'd3) begin
+            n_lost_dirty <= n_lost_dirty + 1;
+            if (poison[i]) begin gv[i] <= 1'b0; n_foreign_lines <= n_foreign_lines + 1; end
+            else golden[i] <= mem[i];
+          end
+      if (gold_we2 && !core_rst) begin golden[gold_addr2] <= gold_data2; gv[gold_addr2] <= 1'b1; end
+      if (gold_we && !core_rst) begin golden[gold_addr] <= gold_data; gv[gold_addr] <= 1'b1; end   // a later store hit wins
     end
   end
 
   // ---------------- checks ----------------
-  int e_tb = 0, n_resets = 0, n_rp = 0, n_swept = 0, n_swept_dirty = 0;
-  always_ff @(posedge clk)
-    if (!sys_rst && lc_v && lc_r && u_g0.c_first && (lc_op == 3'd6 || lc_op == 3'd7) && u_dc.block) begin
-      n_swept <= n_swept + 1; if (lc_op == 3'd7) n_swept_dirty <= n_swept_dirty + 1;
-    end
-  // L2 directory vs DCache meta, and the current data of every line vs the golden memory
-  task automatic check_lines(input string where);
+  int e_tb = 0, n_resets = 0, n_rp = 0;
+  // L2 directory vs DCache meta, and the current data of every line vs the golden memory. The directory is compared
+  // at the reset point in both configurations and after the reset with KEEP; with FULL it is stale after the reset
+  // (L1D empty, S17), the data are compared where the golden value is defined.
+  task automatic check_lines(input string where, input bit dir_exact);
     for (int i = 0; i < 16; i++) begin
       automatic logic [1:0] s = 2'd0; automatic logic [31:0] d = '0;
       for (int w = 0; w < 2; w++)
         if (u_dc.st[i[1:0]][w] != 2'd0 && u_dc.tg[i[1:0]][w] == i[3:2]) begin s = u_dc.st[i[1:0]][w]; d = u_dc.dat[i[1:0]][w]; end
-      // dir: 0 N, 1 B, 2 T   dcache: 0 N, 1 B, 2 T, 3 Dirty: exact in both configurations
-      if (!((dir[i] == 2'd0 && s == 2'd0) || (dir[i] == 2'd1 && s == 2'd1) || (dir[i] == 2'd2 && s >= 2'd2))) begin
+      // dir: 0 N, 1 B, 2 T   dcache: 0 N, 1 B, 2 T, 3 Dirty
+      if (dir_exact && !((dir[i] == 2'd0 && s == 2'd0) || (dir[i] == 2'd1 && s == 2'd1) || (dir[i] == 2'd2 && s >= 2'd2))) begin
         e_tb++; $display("[%0t] ERROR (%s): line %0d: L2 directory %0d, DCache meta %0d", $time, where, i, dir[i], s);
       end
-      if (s == 2'd3) begin
+      if (!gv[i]) n_skipped++;
+      else if (s == 2'd3) begin
         if (d != golden[i]) begin e_tb++; $display("[%0t] ERROR (%s): line %0d lost data: DCache %h, golden %h", $time, where, i, d, golden[i]); end
       end else begin
         if (mem[i] != golden[i]) begin e_tb++; $display("[%0t] ERROR (%s): line %0d lost data: L2 %h, golden %h", $time, where, i, mem[i], golden[i]); end
-        if (s != 2'd0 && d != mem[i]) begin e_tb++; $display("[%0t] ERROR (%s): line %0d clean copy %h != L2 %h", $time, where, i, d, mem[i]); end
       end
+      if (s != 2'd0 && s != 2'd3 && d != mem[i]) begin e_tb++; $display("[%0t] ERROR (%s): line %0d clean copy %h != L2 %h", $time, where, i, d, mem[i]); end
     end
   endtask
   int n_warm = 0, n_held = 0, n_gate_ack = 0;
   // sDrain statistics: number of sDrain phases, the longest one, Probes held in sDrain
   int n_drain = 0, max_drain = 0, cur_drain = 0, n_held_drain = 0;
-  logic held_q, req_q, fe_rst_q; logic [2:0] st_q; int rst_len_any = 0;
+  logic held_q, req_q, fe_rst_q, isolate_q, alive_q, hart_q; int rst_len_any = 0;
+  logic [7:0] iso_run = 8'd0;                         // consecutive cycles with isolate high before this cycle
+  // statistics (4.6)
+  int n_iso_phases = 0, n_iso_cycles = 0, n_sram_in_iso = 0;
+  int n_b2b_direct = 0, n_b2b_gap = 0, n_b2b_probes = 0;
+  int n_rd [8];     // req-drop: 0 sIdle-pulse 1 sQuiesce 2 sDrain 3 sIso 4 sReset-early 5 sReset-late 6 sRelease 7 reraise-in-sReset
   always_ff @(posedge clk) if (!sys_rst && lc_v && lc_r && c_gate) n_gate_ack <= n_gate_ack + 1;
   always_ff @(posedge clk) begin
     held_q <= hold_probe && lb_v;
@@ -352,63 +395,97 @@ module cr_tb;
       if (cur_drain > max_drain) max_drain <= cur_drain;
       if (st_q != S_DRAIN) n_drain <= n_drain + 1;
     end
-    // the Debug Module sees the hart in reset from the core reset until the core runs again
-    if (!sys_rst && (ctl_st == S_RESET || ctl_st == S_RELEASE) && !hart_in_reset) begin
-      e_tb++; $display("[%0t] ERROR: hartIsInReset low in state %0d", $time, ctl_st);
+    // S11: the Debug Module sees the hart in reset from the first cycle of the sequence to its end (hartInReset == busy)
+    if (!sys_rst && hart_in_reset !== busy) begin
+      e_tb++; $display("[%0t] ERROR S11: hartIsInReset %0d != busy %0d in state %0d", $time, hart_in_reset, busy, ctl_st);
     end
-    // nothing reaches or leaves the core on any channel while it is in reset or being released
-    if (!sys_rst && (ctl_st == S_RESET || ctl_st == S_RELEASE) &&
+    if (!sys_rst && busy !== (ctl_st != S_IDLE)) begin e_tb++; $display("[%0t] ERROR: busy %0d in state %0d", $time, busy, ctl_st); end
+    // S12: busy does not drop between two sequences in a row (sRelease -> sQuiesce)
+    if (!sys_rst && st_q == S_RELEASE && ctl_st == S_QUIESCE) begin
+      n_b2b_direct <= n_b2b_direct + 1;
+      if (!busy || !hart_in_reset) begin e_tb++; $display("[%0t] ERROR S12: busy dropped between two sequences in a row", $time); end
+    end
+    if (!sys_rst && st_q == S_IDLE && ctl_st == S_QUIESCE && st_qq == S_RELEASE) n_b2b_gap <= n_b2b_gap + 1;
+    // S2: in sIso, sReset and sRelease nothing reaches or leaves the core on any channel (the gate's own ProbeAck excepted
+    // on the tile side)
+    if (!sys_rst && (ctl_st == S_ISO || ctl_st == S_RESET || ctl_st == S_RELEASE) &&
         (ca_v && ca_r || gb_v && gb_r || cc_v && cc_r || cd_v && cd_r || ce_v && ce_r || ua_v && ua_r || ud_v && ud_r ||
          va_v && va_r || vd_v && vd_r || ka_v && ka_r || kd_v && kd_r)) begin
-      e_tb++; $display("[%0t] ERROR: a TileLink beat on the core side of the gates / isolation in state %0d", $time, ctl_st);
+      e_tb++; $display("[%0t] ERROR S2: a TileLink beat on the core side of the gates / isolation in state %0d", $time, ctl_st);
     end
-    // the tile side of every gate and of the isolation sees nothing from the core then (the gate's own
-    // ProbeAck excepted)
-    if (!sys_rst && (ctl_st == S_RESET || ctl_st == S_RELEASE) &&
+    if (!sys_rst && (ctl_st == S_ISO || ctl_st == S_RESET || ctl_st == S_RELEASE) &&
         (la_v || lc_v && !g0_ack_pend || le_v || ma_v || wa_v || xd_v || ld_v && ld_r || md_v && md_r || wd_v && wd_r || xa_v && xa_r)) begin
-      e_tb++; $display("[%0t] ERROR: a signal from the core reset domain reaches the tile in state %0d", $time, ctl_st);
+      e_tb++; $display("[%0t] ERROR S2: a signal from the core reset domain reaches the tile in state %0d", $time, ctl_st);
     end
-    // no new request of a non-coherent agent once the sequence has started (early block)
+    // S3: no new request of a non-coherent agent once the sequence has started (early block)
     if (!sys_rst && ctl_st != S_IDLE && (ma_v && ma_r && u_g1.a_first || wa_v && wa_r && u_g2.a_first)) begin
-      e_tb++; $display("[%0t] ERROR: a new request of a non-coherent agent crosses its gate in state %0d", $time, ctl_st);
+      e_tb++; $display("[%0t] ERROR S3: a new request of a non-coherent agent crosses its gate in state %0d", $time, ctl_st);
     end
-    // nothing non-coherent is open when sDrain starts (a Get may need a Probe of L1D: B closes in sDrain)
-    if (!sys_rst && s_drain && st_q == S_FLUSH &&
+    // S4: nothing non-coherent is open when sDrain starts (a Get may need a Probe of L1D: B closes in sDrain)
+    if (!sys_rst && s_drain && st_q == S_QUIESCE &&
         (!xb_empty || u_mgr.v[0] || u_mgr.v[1] || u_mgr.abeat || u_mgr.dbeat || u_l2.ul_v[0] || u_l2.ul_v[1] || u_l2.ula_beat)) begin
-      e_tb++; $display("[%0t] ERROR: a non-coherent request is still open when sDrain starts", $time);
+      e_tb++; $display("[%0t] ERROR S4: a non-coherent request is still open when sDrain starts", $time);
     end
-    // no Probe crosses the gate in sDrain (channel B closed from its first cycle)
-    if (!sys_rst && s_drain && lb_v && lb_r) begin
-      e_tb++; $display("[%0t] ERROR: a Probe crosses the L1D gate in sDrain", $time);
+    // S5: no Probe crosses the gate in sDrain and sIso (channel B closed from its first cycle)
+    if (!sys_rst && (s_drain || s_iso) && lb_v && lb_r) begin
+      e_tb++; $display("[%0t] ERROR S5: a Probe crosses the L1D gate in %0s", $time, s_drain ? "sDrain" : "sIso");
     end
-    // every core reset lasts at least rstCycles (TileLink 1.8.1 3.2.2: valid low for 100 cycles in reset)
+    // S6: every core reset lasts at least rstCycles (TileLink 1.9.3 3.2.2: valid low for 100 cycles in reset)
     if (!sys_rst && st_q == S_RESET && ctl_st != S_RESET && rst_len_any < RST_CYCLES) begin
-      e_tb++; $display("[%0t] ERROR: core reset shorter than %0d cycles (%0d)", $time, RST_CYCLES, rst_len_any);
+      e_tb++; $display("[%0t] ERROR S6: core reset shorter than %0d cycles (%0d)", $time, RST_CYCLES, rst_len_any);
     end
     rst_len_any <= (ctl_st == S_RESET) ? rst_len_any + 1 : 0;
-    // the core leaves reset only after the request dropped
+    // S7: the core leaves reset only after the request dropped
     if (!sys_rst && st_q == S_RESET && ctl_st == S_RELEASE && req_q) begin
-      e_tb++; $display("[%0t] ERROR: the core leaves reset while the request is high", $time);
+      e_tb++; $display("[%0t] ERROR S7: the core leaves reset while the request is high", $time);
     end
-    // the sequence ends (the core runs) only with the frontend out of reset
-    if (!sys_rst && st_q == S_RELEASE && ctl_st == S_IDLE && fe_rst_q) begin
-      e_tb++; $display("[%0t] ERROR: the sequence ends while the frontend is still in reset", $time);
+    // S8: the sequence ends (isolate drops) only a cycle after the DCache and the frontend are out of reset
+    if (!sys_rst && st_q == S_RELEASE && ctl_st != S_RELEASE && (fe_rst_q || !alive_q)) begin
+      e_tb++; $display("[%0t] ERROR S8: the isolation drops while the frontend is in reset (fe_rst %0d) or the DCache not alive (%0d)", $time, fe_rst_q, alive_q);
     end
-    // isolation: high whenever the core reset is asserted by the sequencer (also in its synchroniser), and
-    // only in sReset / sRelease
+    if (!sys_rst && isolate_q && !isolate && !(st_q == S_RELEASE && alive_q && !fe_rst_q)) begin
+      e_tb++; $display("[%0t] ERROR S8: isolate fell in state %0d (previous %0d)", $time, ctl_st, st_q);
+    end
+    // S9: the core reset is raised only after isolate stood for isoCycles cycles
+    iso_run <= isolate ? ((iso_run == 8'hff) ? iso_run : iso_run + 8'd1) : 8'd0;
+    if (!sys_rst && ctl_core_reset && !core_rst_q_ctl && iso_run < 8'(ISO)) begin
+      e_tb++; $display("[%0t] ERROR S9: the core reset rises after %0d cycles of isolation (isoCycles %0d)", $time, iso_run, ISO);
+    end
+    // S10: isolate only in sIso / sReset / sRelease and always while the core reset (also in its synchroniser) is
+    // asserted by the sequencer; inReset only in sReset
     if (!sys_rst && !meta_rst && core_rst && !force_core_rst && !isolate) begin
-      e_tb++; $display("[%0t] ERROR: XSCore in reset without isolation (state %0d)", $time, ctl_st);
+      e_tb++; $display("[%0t] ERROR S10: XSCore in reset without isolation (state %0d)", $time, ctl_st);
     end
-    if (!sys_rst && isolate && !(ctl_st == S_RESET || ctl_st == S_RELEASE)) begin
-      e_tb++; $display("[%0t] ERROR: isolation in state %0d", $time, ctl_st);
+    if (!sys_rst && isolate !== (ctl_st == S_ISO || ctl_st == S_RESET || ctl_st == S_RELEASE)) begin
+      e_tb++; $display("[%0t] ERROR S10: isolation %0d in state %0d", $time, isolate, ctl_st);
     end
-    // sweep: while the gate answers Probes (isolation) a Probe offered is taken at once, unless the previous
-    // ProbeAck of the gate is still waiting for channel C
-    if (!sys_rst && !KEEP && isolate && lb_v && !lb_r && !g0_ack_pend) begin
-      e_tb++; $display("[%0t] ERROR: sweep: a Probe offered while the core is in reset is not taken by the gate", $time);
+    if (!sys_rst && in_reset !== (ctl_st == S_RESET)) begin e_tb++; $display("[%0t] ERROR S10: inReset %0d in state %0d", $time, in_reset, ctl_st); end
+    // S13: FULL: the gate takes a Probe only in sReset / sRelease; a Probe offered then is taken at once unless the previous
+    // ProbeAck of the gate is still waiting for channel C. S14: KEEP: the gate never answers
+    if (!sys_rst && !KEEP && lb_v && lb_r && b_gate && !(ctl_st == S_RESET || ctl_st == S_RELEASE)) begin
+      e_tb++; $display("[%0t] ERROR S13: the gate takes a Probe in state %0d", $time, ctl_st);
     end
-    st_q <= ctl_st; req_q <= req; fe_rst_q <= fe_rst;
-    if (!sys_rst && ctl_st == S_IDLE && hart_in_reset) begin e_tb++; $display("[%0t] ERROR: hartIsInReset high in sIdle", $time); end
+    if (!sys_rst && !KEEP && isolate && !s_iso && lb_v && !lb_r && !g0_ack_pend) begin
+      e_tb++; $display("[%0t] ERROR S13: a Probe offered while the core is in reset is not taken by the gate", $time);
+    end
+    if (!sys_rst && KEEP && (ack_probe || g0_ack_pend || b_gate && lb_v && lb_r)) begin
+      e_tb++; $display("[%0t] ERROR S14: KEEP: the gate answers a Probe", $time);
+    end
+    // S15: KEEP: no access to the arrays gets through while isolated (tag / data / meta, read and write). FULL: counted
+    // (the check is not empty only if the accesses are there)
+    if (!sys_rst && isolate && arr_access) begin
+      n_sram_in_iso <= n_sram_in_iso + 1;
+      if (KEEP) begin e_tb++; $display("[%0t] ERROR S15: array access while isolated (state %0d)", $time, ctl_st); end
+    end
+    // S18: from the second cycle of the sequence until the core reset the DCache accepts no store, atomic, CMO or new
+    // miss (events are registered: ev_* of the previous cycle, state of that cycle = st_q)
+    if (!sys_rst && (ev_store || ev_miss) &&
+        (st_q == S_DRAIN || st_q == S_ISO || (st_q == S_QUIESCE && st_qq == S_QUIESCE))) begin
+      e_tb++; $display("[%0t] ERROR S18: the DCache accepts a %0s in state %0d", $time, ev_store ? "store" : "miss", st_q);
+    end
+    if (isolate) n_iso_cycles <= n_iso_cycles + 1;
+    if (isolate && !isolate_q) n_iso_phases <= n_iso_phases + 1;
+    st_qq <= st_q; st_q <= ctl_st; req_q <= req; fe_rst_q <= fe_rst; isolate_q <= isolate; alive_q <= dc_alive; hart_q <= hart_in_reset;
   end
   always_ff @(posedge clk) begin
     core_rst_q <= core_rst;
@@ -416,32 +493,35 @@ module cr_tb;
     // reset point: first cycle of a sequencer reset
     if (rp_now) begin
       n_rp <= n_rp + 1;
-      if (l2_busy) begin e_tb++; $display("[%0t] ERROR: L2 has a core transaction outstanding at the reset point", $time); end
+      // S1
+      if (l2_busy) begin e_tb++; $display("[%0t] ERROR S1: L2 has a core transaction outstanding at the reset point", $time); end
       if (!xb_empty || !iso_quiet || u_mgr.v[0] || u_mgr.v[1] || u_mgr.abeat || u_mgr.dbeat) begin
-        e_tb++; $display("[%0t] ERROR: ICache control request outstanding at the reset point", $time);
-      end
-      // sweep: L1D is empty at the reset point (every line released)
-      if (!KEEP) begin
-        automatic int nv = 0;
-        for (int a = 0; a < 4; a++) for (int b = 0; b < 2; b++) if (u_dc.st[a][b] != 2'd0) nv++;
-        if (nv != 0) begin e_tb++; $display("[%0t] ERROR: sweep: %0d lines still valid in L1D at the reset point", $time, nv); end
+        e_tb++; $display("[%0t] ERROR S1: ICache control request outstanding at the reset point", $time);
       end
       // the DCache control logic (reset now) must be empty: the real state, not its flags; and the L1D buffers
-      if (dc_busy_true) begin e_tb++; $display("[%0t] ERROR: DCache control logic busy at the reset point", $time); end
-      if (!bufb_empty || !bufc_empty) begin e_tb++; $display("[%0t] ERROR: a message in the L1D buffer (B %0d, C %0d) at the reset point", $time, !bufb_empty, !bufc_empty); end
-      check_lines("reset point");
+      if (dc_busy_true) begin e_tb++; $display("[%0t] ERROR S1: DCache control logic busy at the reset point", $time); end
+      if (!bufb_empty || !bufc_empty) begin e_tb++; $display("[%0t] ERROR S1: a message in the L1D buffer (B %0d, C %0d) at the reset point", $time, !bufb_empty, !bufc_empty); end
+      if (!(quiet0 && quiet1 && quiet2 && iso_quiet)) begin e_tb++; $display("[%0t] ERROR S1: a gate is not quiet at the reset point", $time); end
+      check_lines("reset point", 1'b1);
     end
-    // the core leaves reset: KEEP: L1D still holds its lines and still matches L2; sweep: L1D is empty
+    // the core leaves reset. KEEP: L1D still holds its lines and still matches L2 (S16); FULL: L1D is empty: meta N, tags 0 (S17)
     if (!sys_rst && !core_rst && core_rst_q && !meta_rst) begin
-      automatic int nv = 0;
-      for (int a = 0; a < 4; a++) for (int b = 0; b < 2; b++) if (u_dc.st[a][b] != 2'd0) nv++;
+      automatic int nv = 0, nt = 0;
+      for (int a = 0; a < 4; a++) for (int b = 0; b < 2; b++) begin
+        if (u_dc.st[a][b] != 2'd0) nv++;
+        if (u_dc.tg[a][b] != 2'd0) nt++;
+      end
       n_warm <= n_warm + nv;
-      if (!KEEP && nv != 0) begin e_tb++; $display("[%0t] ERROR: %0d lines still valid in L1D after the core reset (sweep)", $time, nv); end
-      check_lines("after reset");
+      if (!KEEP && nv != 0) begin e_tb++; $display("[%0t] ERROR S17: %0d lines still valid in L1D after the core reset (FULL)", $time, nv); end
+      if (!KEEP && nt != 0) begin e_tb++; $display("[%0t] ERROR S17: %0d tags not cleared after the core reset (FULL)", $time, nt); end
+      check_lines("after reset", KEEP);
     end
-    // every load hit returns the current value of the line
-    if (!sys_rst && !core_rst && lh_v && lh_data != golden[lh_addr]) begin
-      e_tb++; $display("[%0t] ERROR: load of line %0d returned %h, golden %h", $time, lh_addr, lh_data, golden[lh_addr]);
+    // S23: every load hit returns the current value of the line (FULL: where the golden value is defined)
+    if (!sys_rst && !core_rst && lh_v) begin
+      if (!gv[lh_addr]) n_skipped <= n_skipped + 1;
+      else if (lh_data != golden[lh_addr]) begin
+        e_tb++; $display("[%0t] ERROR S23: load of line %0d returned %h, golden %h", $time, lh_addr, lh_data, golden[lh_addr]);
+      end
     end
   end
 
@@ -490,9 +570,9 @@ module cr_tb;
   endtask
 
   // one request: exactly one core reset
-  task automatic check_resets(input int n0);
-    if (n_resets - n0 != 1) begin
-      e_tb++; $display("[%0t] ERROR: %0d core resets for one request", $time, n_resets - n0);
+  task automatic check_resets(input int n0, input int nexp = 1);
+    if (n_resets - n0 != nexp) begin
+      e_tb++; $display("[%0t] ERROR S12: %0d core resets for the request(s), expected %0d", $time, n_resets - n0, nexp);
     end
   endtask
   task automatic core_reset(input int hold);
@@ -507,9 +587,24 @@ module cr_tb;
   endtask
 
   // ---------------- SCEN=5: start the procedure while a transaction of class c is in flight ----------------
-  int n_trig_hit [13], n_trig_miss [13];
+  int n_trig_hit [16], n_trig_miss [16];
   task automatic core_reset_on(input int c);
-    int n0 = n_resets; int i = 0;
+    int n0 = n_resets; int i = 0; int pa = -1;
+    if (c == 14) begin   // CBO in flight: not modelled in cr_dcache (TESTPLAN 4.1 item 7: optional); exercised by the RTL test (D6)
+      if (n_trig_miss[14] == 0 && n_trig_hit[14] == 0) $display("SKIPPED C14: CBO is not modelled in cr_dcache");
+      n_trig_miss[14]++; return;
+    end
+    if (c == 15) begin   // a Probe offered in the decision cycle of sDrain
+      for (int w = 2; w >= 1 && pa < 0; w--) pa = pick_line(2'(w));
+      if (pa < 0) pa = pick_line(2'd3);
+      if (pa < 0) begin n_trig_miss[c]++; core_reset(1); return; end
+      arm_snoop(pa, 2'd2, 7);
+      req_task = 1; wait_armed_snoop(); cycles(2); req_task = 0;
+      wait_for("core reset", 20000, in_reset, 1'b1);
+      wait_for("sequence end", 20000, busy, 1'b0);
+      check_resets(n0); n_trig_hit[c]++;
+      return;
+    end
     trig_sel = c; trig_arm = 1;
     while (busy !== 1'b1 && i < 30000) begin @(posedge clk); i++; end
     trig_arm = 0;
@@ -523,14 +618,16 @@ module cr_tb;
 
   // ---------------- SCEN=6: directed Probes of L1D lines ----------------
   //   when: 0 offered while the core is in reset, 1 in sRelease, 2 right after the sequence, 3 at the start of
-  //         sFlush, 4 in the first cycle of sDrain, 5 in the last cycle of sFlush
+  //         sQuiesce, 4 in the first cycle of sDrain, 5 in the last cycle of sQuiesce, 6 in the first cycle of sIso
+  //         (ISO2: in the second), 7 in the decision cycle, 8 in the coreUp cycle (the last of sRelease)
   //   kind: 3 dirty, 2 clean T, 1 B
-  localparam int NWHEN = 6;
+  localparam int NWHEN = 9;
   localparam string WNAME [NWHEN] = '{"offered in sReset", "offered in sRelease", "right after the sequence",
-                                      "start of sFlush", "first cycle of sDrain", "last cycle of sFlush"};
+                                      "start of sQuiesce", "first cycle of sDrain", "last cycle of sQuiesce",
+                                      "first cycle of sIso", "decision cycle", "coreUp cycle"};
   int n_dir [NWHEN][4][3];      // [when][kind][cap] completed and checked
   int n_dir_skip, n_dir_stale_l2;
-  int n_d3_flush, n_d3_later, n_d4_drain, n_d4_later, n_d5_last, n_d5_later;
+  int n_dh [NWHEN], n_dl [NWHEN];   // the Probe was offered in the intended phase / later
   task automatic quiet_env();
     int i = 0;
     traffic_en = 0; snoop_en = 0;
@@ -545,16 +642,19 @@ module cr_tb;
     return -1;
   endfunction
   // ProbeAck of every line, latched (a held Probe may be answered before the scenario starts waiting)
-  int n_ack [16]; logic ack_data [16]; logic [31:0] ack_val [16]; logic [2:0] ack_par [16]; longint ack_t [16];
+  int n_ack [16]; logic ack_data [16]; logic [31:0] ack_val [16]; logic [2:0] ack_par [16]; longint ack_t [16]; logic ack_gt [16];
   always_ff @(posedge clk) if (sb_ack_v) begin
     n_ack[sb_ack_addr] <= n_ack[sb_ack_addr] + 1; ack_data[sb_ack_addr] <= sb_ack_data; ack_val[sb_ack_addr] <= sb_ack_val;
-    ack_par[sb_ack_addr] <= sb_ack_param; ack_t[sb_ack_addr] <= cyc_tb;
+    ack_par[sb_ack_addr] <= sb_ack_param; ack_t[sb_ack_addr] <= cyc_tb; ack_gt[sb_ack_addr] <= sb_ack_gate;
   end
-  // the gate took a Probe in the last cycle of sFlush (case 5)
-  longint take_flush_t = -10; logic last_flush_take;
+  // the gate took a Probe in the last cycle of sQuiesce (case 5); a Probe offered in the decision cycle (case 7)
+  longint take_q_t = -10; logic last_q_take; logic lbv_q0, offer_dec;
   always_ff @(posedge clk) begin
-    if (!sys_rst && lb_v && lb_r && s_flush) take_flush_t <= cyc_tb;
-    if (!sys_rst && s_drain && st_q == S_FLUSH) last_flush_take <= take_flush_t == cyc_tb - 1;
+    if (!sys_rst && lb_v && lb_r && s_quiesce) take_q_t <= cyc_tb;
+    if (!sys_rst && s_drain && st_q == S_QUIESCE) last_q_take <= take_q_t == cyc_tb - 1;
+    lbv_q0 <= lb_v && !lb_r;
+    if (lb_v && !lbv_q0) offer_dec <= s_drain && u_ctl.drain_end;
+    if (!sys_rst && st_q == S_RELEASE && ctl_st == S_QUIESCE && lbv_q0) n_b2b_probes <= n_b2b_probes + 1;
   end
   // forced snoop: wait until L2 has started it; snp_l2only = L2 served it alone (its directory lists no copy)
   logic snp_l2only; longint snp_start_t;
@@ -566,7 +666,7 @@ module cr_tb;
     fsnp_req = 0;
     if (i >= maxc) begin e_tb++; $display("[%0t] TIMEOUT: L2 could not start a snoop of line %0d (previous Probe not answered)", $time, addr); finish(0); end
   endtask
-  // snoop started by the trigger fsnp_arm (cases 3, 4, 5)
+  // snoop started by the trigger fsnp_arm (cases 3..8)
   task automatic arm_snoop(input int addr, input logic [1:0] cap, input int arm);
     fsnp_addr = 4'(addr); fsnp_param = cap; fsnp_arm = arm; snp_start_t = -1;
   endtask
@@ -576,18 +676,18 @@ module cr_tb;
     snp_l2only = fsnp_l2only; snp_start_t = cyc_tb;
     fsnp_arm = 0;
   endtask
-  int n_dir_swept, n_dir_swept_data;
+  int n_dir_gate, n_dir_gate_lost;
   task automatic directed_probe(input int when_, input int kind, input logic [1:0] cap);
-    int addr = -1, i = 0, a0, n0 = n_resets; logic [31:0] expv, expv_l2; logic [1:0] st0; logic l2_stale; longint t_drop = 0;
+    int addr = -1, i = 0, a0, n0 = n_resets; logic [31:0] expv; logic [1:0] st0; longint t_drop = 0;
     for (int tries = 0; tries < 12 && addr < 0; tries++) begin
       traffic_en = 1; snoop_en = 1; cycles($urandom_range(800, 2000));
       quiet_env();
       addr = pick_line(2'(kind));
     end
     if (addr < 0) begin n_dir_skip++; return; end
-    expv = golden[addr]; expv_l2 = mem[addr]; st0 = l1st[addr]; l2_stale = mem[addr] != expv; tgt_addr = addr; a0 = n_ack[addr];
+    expv = golden[addr]; st0 = l1st[addr]; tgt_addr = addr; a0 = n_ack[addr];
     $display("#DIR %0d when=%0d kind=%0d cap=%0d line=%0d start-cycle=%0d", n_resets, when_, kind, cap, addr, cyc_tb);
-    if (kind == 3 && l2_stale) n_dir_stale_l2++;
+    if (kind == 3 && mem[addr] != expv) n_dir_stale_l2++;
     case (when_)
       0: begin   // the core is held in reset while the Probe arrives
         req_task = 1;
@@ -605,11 +705,11 @@ module cr_tb;
       2: begin   // right after the sequence
         req_task = 1; wait_for("core reset", 20000, in_reset, 1'b1); req_task = 0;
         wait_for("sequence end", 20000, busy, 1'b0);
-        // KEEP: the line is still in L1D with its state and data (hot); sweep: L1D is empty
+        // KEEP: the line is still in L1D with its state and data (hot); FULL: L1D is empty
         if (l1st[addr] != (KEEP ? st0 : 2'd0)) begin e_tb++; $display("[%0t] ERROR: line %0d state %0d before the reset, %0d after", $time, addr, st0, l1st[addr]); end
         issue_snoop(addr, cap);
       end
-      3, 4, 5: begin   // started by a trigger at the start of sFlush / at the end of sFlush
+      default: begin   // 3..8: started by a trigger
         arm_snoop(addr, cap, when_);
         cycles(1);
         req_task = 1;
@@ -623,38 +723,54 @@ module cr_tb;
     if (i >= 20000) begin e_tb++; $display("[%0t] ERROR: no ProbeAck for the directed Probe of line %0d (%s)", $time, addr, WNAME[when_]); end
     else begin
       automatic int ph = u_sb.pr_ph[addr];
-      // answered by L1D: KEEP always (before the reset or by the hot L1D after it); sweep only in sFlush,
-      // before the sweep reached the line. Otherwise (sweep) the line was released before: ProbeAck NtoN, by the
-      // gate while the core is in reset, by the empty DCache afterwards.
       if (KEEP) begin
+        // L1D answers, always, with its data: before the reset, or hot after it
+        if (ack_gt[addr]) begin e_tb++; $display("[%0t] ERROR S14: KEEP: line %0d answered by the gate", $time, addr); end
         if (kind == 3 && !(ack_data[addr] && ack_val[addr] == expv)) begin
           e_tb++; $display("[%0t] ERROR: dirty line %0d (%s): ProbeAck%s %h, expected ProbeAckData %h", $time, addr, WNAME[when_], ack_data[addr] ? "Data" : "", ack_val[addr], expv);
         end
         if (kind != 3 && ack_data[addr]) begin e_tb++; $display("[%0t] ERROR: clean line %0d answered with data", $time, addr); end
         if (cap == 2'd1 && l1st[addr] != 2'd1) begin e_tb++; $display("[%0t] ERROR: line %0d not B in L1D after toB (state %0d)", $time, addr, l1st[addr]); end
       end else begin
-        if (ph != 1 && (ack_data[addr] || ack_par[addr] != 3'd5)) begin
-          e_tb++; $display("[%0t] ERROR: swept line %0d (%s, phase %0d): ProbeAck%s param %0d, expected ProbeAck NtoN", $time, addr, WNAME[when_], ph, ack_data[addr] ? "Data" : "", ack_par[addr]);
+        // FULL: a Probe offered before the reset (phase 0, 1) is answered by L1D with its data; one offered in sDrain,
+        // sIso, sReset, sRelease waits (sDrain, sIso) and is answered NtoN by the gate while the core is in reset (or by
+        // the empty DCache right after it); so is the Probe right after the sequence (case 2): the line is gone
+        if (ph >= 2 || when_ == 2) begin
+          if (ack_data[addr] || ack_par[addr] != 3'd5) begin
+            e_tb++; $display("[%0t] ERROR: lost line %0d (%s, phase %0d): ProbeAck%s param %0d, expected ProbeAck NtoN", $time, addr, WNAME[when_], ph, ack_data[addr] ? "Data" : "", ack_par[addr]);
+          end
+          if (ack_gt[addr]) begin n_dir_gate++; if (kind == 3) n_dir_gate_lost++; end
+        end else begin
+          if (ack_gt[addr]) begin e_tb++; $display("[%0t] ERROR: line %0d offered before the reset (phase %0d) answered by the gate", $time, addr, ph); end
+          if (kind == 3 && !(ack_data[addr] && ack_val[addr] == expv)) begin
+            e_tb++; $display("[%0t] ERROR: dirty line %0d (%s): ProbeAck%s %h, expected ProbeAckData %h", $time, addr, WNAME[when_], ack_data[addr] ? "Data" : "", ack_val[addr], expv);
+          end
+          if (kind != 3 && ack_data[addr]) begin e_tb++; $display("[%0t] ERROR: clean line %0d answered with data", $time, addr); end
+          if (cap == 2'd1 && l1st[addr] != 2'd1) begin e_tb++; $display("[%0t] ERROR: line %0d not B in L1D after toB (state %0d)", $time, addr, l1st[addr]); end
         end
-        if (ack_data[addr] && ack_val[addr] != expv) begin
-          e_tb++; $display("[%0t] ERROR: line %0d in sFlush: ProbeAckData %h, expected %h", $time, addr, ack_val[addr], expv);
-        end
-        n_dir_swept++; if (expv != expv_l2) n_dir_swept_data++;
       end
-      if (mem[addr] != expv) begin e_tb++; $display("[%0t] ERROR: L2 holds %h for line %0d after the Probe, expected %h", $time, mem[addr], addr, expv); end
+      if (gv[addr] && mem[addr] != golden[addr] && !(KEEP && l1st[addr] == 2'd3)) begin
+        e_tb++; $display("[%0t] ERROR: L2 holds %h for line %0d after the Probe, expected %h", $time, mem[addr], addr, golden[addr]);
+      end
       if (cap == 2'd2 && l1st[addr] != 2'd0) begin e_tb++; $display("[%0t] ERROR: line %0d still in L1D after toN", $time, addr); end
       // KEEP: a Probe offered in sReset waits until the request dropped and the core is out of reset
       if (KEEP && when_ == 0 && ack_t[addr] <= t_drop) begin
         e_tb++; $display("[%0t] ERROR: line %0d answered at cycle %0d, the request dropped at %0d", $time, addr, ack_t[addr], t_drop);
       end
-      // the Probe really was offered in the intended phase (0 idle 1 sFlush 2 sDrain 3 sReset 4 sRelease);
-      // the cases started by a trigger are counted (hit / later), the phase is checked above
-      if ((when_ == 0 && ph != 3) || (when_ == 1 && ph != 4) || (when_ == 2 && ph != 0)) begin
+      // the Probe really was offered in the intended phase (0 idle 1 sQuiesce 2 sDrain 3 sIso 4 sReset 5 sRelease);
+      // the cases started by a trigger are counted (hit / later), the phase is checked above for the others
+      if ((when_ == 0 && ph != 4) || (when_ == 1 && ph != 5) || (when_ == 2 && ph != 0)) begin
         e_tb++; $display("[%0t] ERROR: directed Probe of line %0d offered in phase %0d, intended: %s", $time, addr, ph, WNAME[when_]);
       end
-      if (when_ == 3) begin if (ph == 1) n_d3_flush++; else n_d3_later++; end
-      if (when_ == 4) begin if (ph == 2) n_d4_drain++; else n_d4_later++; end
-      if (when_ == 5) begin if (ph == 1 && last_flush_take) n_d5_last++; else n_d5_later++; end
+      case (when_)
+        3: if (ph == 1) n_dh[3]++; else n_dl[3]++;
+        4: if (ph == 2) n_dh[4]++; else n_dl[4]++;
+        5: if (ph == 1 && last_q_take) n_dh[5]++; else n_dl[5]++;
+        6: if (ph == 3) n_dh[6]++; else n_dl[6]++;
+        7: if (ph == 2 && offer_dec) n_dh[7]++; else n_dl[7]++;
+        8: if (ph == 5) n_dh[8]++; else n_dl[8]++;
+        default: ;
+      endcase
       n_dir[when_][kind][cap == 2'd1 ? 1 : 2]++;
     end
     while (req_task) @(posedge clk);
@@ -668,17 +784,12 @@ module cr_tb;
   // system bus access of the debugger would.
   //   KEEP  : the core is in reset: one snoop of a kept line, its Probe waits in L2 until the request drops,
   //           then L1D answers with its data
-  //   sweep : lines that L1D released (L2 lists none of them): the Probe, sent anyway, is answered NtoN at once
-  //           by the gate, L2 holds the data
+  //   FULL  : lines that L1D held and lost: the Probe, sent anyway, is answered NtoN at once by the gate, L2
+  //           holds the data (of the line as L2 had it; the loss of a dirty line is counted)
   int n_dbg, n_dbg_snoops, n_dbg_dirty, max_dbg_ack, n_dbg_l2only, n_dbg_waited, max_dbg_wait, n_dbg_hot, n_dbg_race;
-  logic held_at_rp [16];   // L1D held the line at the last reset point (sweep: it was released before)
-  logic swept_line [16];   // the line was released during the current quiesce
-  always_ff @(posedge clk) if (rp_now) for (int i = 0; i < 16; i++) held_at_rp[i] <= swept_line[i];
-  always_ff @(posedge clk)
-    for (int i = 0; i < 16; i++)
-      if (sys_rst || (ctl_st == S_IDLE && !req)) swept_line[i] <= 1'b0;
-      else if (lc_v && lc_r && u_g0.c_first && (lc_op == 3'd6 || lc_op == 3'd7) && lc_addr == 4'(i)) swept_line[i] <= 1'b1;
-  function automatic int pick_swept();
+  logic held_at_rp [16];   // L1D held the line at the last reset point (FULL: it was lost with the reset)
+  always_ff @(posedge clk) if (rp_now) for (int i = 0; i < 16; i++) held_at_rp[i] <= l1st[i] != 2'd0;
+  function automatic int pick_lost();
     int off = $urandom_range(0, 15);
     for (int k = 0; k < 16; k++) if (held_at_rp[(k + off) % 16]) return (k + off) % 16;
     return -1;
@@ -697,7 +808,7 @@ module cr_tb;
         if (addr < 0) addr = pick_line(2'd2);
         if (addr < 0) addr = pick_line(2'd1);
       end else begin
-        addr = pick_swept();
+        addr = pick_lost();
         if (addr < 0) addr = $urandom_range(0, 15);
       end
       if (addr >= 0) begin
@@ -721,8 +832,8 @@ module cr_tb;
             while (n_ack[addr] == a0 && i < 20000) begin @(posedge clk); i++; end
             if (int'(cyc_tb - t0) > max_dbg_ack) max_dbg_ack = int'(cyc_tb - t0);
             if (i >= 20000) begin e_tb++; $display("[%0t] ERROR: snoop of line %0d during the debug hold not answered", $time, addr); end
-            else if (ack_data[addr] || ack_par[addr] != 3'd5 || mem[addr] != expv) begin
-              e_tb++; $display("[%0t] ERROR: snoop of swept line %0d during the hold: ProbeAck%s param %0d, L2 %h, expected NtoN and %h", $time, addr, ack_data[addr] ? "Data" : "", ack_par[addr], mem[addr], expv);
+            else if (ack_data[addr] || ack_par[addr] != 3'd5 || (gv[addr] && mem[addr] != golden[addr])) begin
+              e_tb++; $display("[%0t] ERROR: snoop of lost line %0d during the hold: ProbeAck%s param %0d, L2 %h, expected NtoN and %h", $time, addr, ack_data[addr] ? "Data" : "", ack_par[addr], mem[addr], golden[addr]);
             end
             n_dbg_snoops++; if (dirty) n_dbg_dirty++;
           end
@@ -766,18 +877,83 @@ module cr_tb;
     n_dbg++;
   endtask
 
+  // ---------------- SCEN=8: sequences in a row ----------------
+  // the request is dropped in sReset (after rstCycles) and raised again: (a) in sRelease before coreUp, (b) in the coreUp
+  // cycle, (c) one cycle after sIdle (the ordinary gap), (d) not dropped at all (one long reset). Expected: (a) (b) two
+  // resets, busy without a gap (S12); (c) two resets with the gap; (d) one reset.
+  task automatic seq_in_row(input int variant);
+    int n0 = n_resets; int i;
+    traffic_en = 1; snoop_en = 1; cycles($urandom_range(500, 1500));
+    req_task = 1;
+    wait_for("core reset", 20000, in_reset, 1'b1);
+    cycles(RST_CYCLES + $urandom_range(0, 5));
+    if (variant == 3) begin
+      cycles($urandom_range(100, 400)); req_task = 0;
+      wait_for("sequence end", 30000, busy, 1'b0); check_resets(n0, 1); return;
+    end
+    req_task = 0;
+    case (variant)
+      0: begin
+        i = 0; while (ctl_st != S_RELEASE && i < 2000) begin @(posedge clk); i++; end
+        req_task = 1;
+      end
+      1: begin
+        i = 0; while (!(ctl_st == S_RELEASE && fe_q[3] && !fe_q[2]) && i < 2000) begin @(posedge clk); i++; end
+        req_task = 1;
+      end
+      default: begin
+        wait_for("sequence end", 30000, busy, 1'b0);
+        cycles(1); req_task = 1;
+      end
+    endcase
+    wait_for("second core reset", 20000, in_reset, 1'b1);
+    cycles(RST_CYCLES + $urandom_range(0, 5));
+    req_task = 0;
+    wait_for("sequence end", 30000, busy, 1'b0);
+    check_resets(n0, 2);
+  endtask
+
+  // ---------------- SCEN=9: the request dropped / raised in every state ----------------
+  // where: 0 a one-cycle pulse in sIdle, 1..3 dropped in sQuiesce / sDrain / sIso, 4 dropped in sReset before rstCycles,
+  // 5 dropped in sReset after rstCycles, 6 dropped in sRelease, 7 dropped in sReset and raised again before rstCycles.
+  // The request is fixed: every case ends with exactly one core reset (7: one extended reset).
+  task automatic drop_in(input int where);
+    int n0 = n_resets; int i = 0; logic [2:0] tgt;
+    traffic_en = 1; snoop_en = 1; cycles($urandom_range(300, 1000));
+    if (where == 0) begin
+      req_task = 1; @(posedge clk); req_task = 0; n_rd[0]++;
+    end else begin
+      req_task = 1;
+      case (where)
+        1: tgt = S_QUIESCE; 2: tgt = S_DRAIN; 3: tgt = S_ISO; 6: tgt = S_RELEASE; default: tgt = S_RESET;
+      endcase
+      while (ctl_st != tgt && i < 30000) begin @(posedge clk); i++; end
+      case (where)
+        4: cycles($urandom_range(1, RST_CYCLES / 2));
+        5: cycles(RST_CYCLES + $urandom_range(2, 20));
+        7: cycles($urandom_range(1, 4));
+        default: ;
+      endcase
+      if (ctl_st == tgt) n_rd[where]++;
+      req_task = 0;
+      if (where == 7) begin cycles($urandom_range(1, 3)); req_task = 1; n_rd[7]++; cycles(RST_CYCLES + $urandom_range(0, 10)); req_task = 0; end
+    end
+    wait_for("sequence end", 30000, busy, 1'b0);
+    check_resets(n0);
+  endtask
+
   task automatic finish(input bit expect_errors);
     traffic_en = 0; snoop_en = 0;
     cycles(2000);
-    // global consistency: a line dirty in the DCache holds the golden value, otherwise L2 does
+    // global consistency: a line dirty in the DCache holds the golden value, otherwise L2 does (FULL: where defined)
     for (int i = 0; i < 16; i++) begin
       automatic logic in_dc = 1'b0;
       for (int w = 0; w < 2; w++)
         if (u_dc.st[i[1:0]][w] == 2'd3 && u_dc.tg[i[1:0]][w] == i[3:2]) begin
           in_dc = 1'b1;
-          if (u_dc.dat[i[1:0]][w] != golden[i]) begin e_tb++; $display("ERROR: DCache line %0d %h != golden %h", i, u_dc.dat[i[1:0]][w], golden[i]); end
+          if (gv[i] && u_dc.dat[i[1:0]][w] != golden[i]) begin e_tb++; $display("ERROR: DCache line %0d %h != golden %h", i, u_dc.dat[i[1:0]][w], golden[i]); end
         end
-      if (!in_dc && mem[i] != golden[i]) begin e_tb++; $display("ERROR: final L2 line %0d %h != golden %h", i, mem[i], golden[i]); end
+      if (!in_dc && gv[i] && mem[i] != golden[i]) begin e_tb++; $display("ERROR: final L2 line %0d %h != golden %h", i, mem[i], golden[i]); end
     end
     if (l2_busy) begin e_tb++; $display("ERROR: L2 still has core transactions outstanding at the end (hung)"); end
     if (u_ul.busy[0] || u_ul.busy[1] || u_ul2.busy[0] || u_ul2.busy[1] || !xb_empty || !iso_quiet) begin
@@ -786,9 +962,16 @@ module cr_tb;
     if (u_mon.n_open() != 0) begin e_tb++; $display("ERROR: txmon: %0d transactions still open at the end", u_mon.n_open()); end
     u_mon.report(); u_sb.report();
     $display("drain: sDrain-phases=%0d longest-sDrain=%0d probes-held-in-sDrain=%0d get-probes=%0d", n_drain, max_drain, n_held_drain, n_get_probe);
+    $display("iso: phases=%0d cycles=%0d loads-clamped=%0d garbage-masked=%0d sram-access-in-iso=%0d", n_iso_phases, n_iso_cycles, n_lc, n_gm, n_sram_in_iso);
+    $display("b2b: direct=%0d gap=%0d probes-across=%0d", n_b2b_direct, n_b2b_gap, n_b2b_probes);
+    $display("req-drop: sIdle-pulse=%0d sQuiesce=%0d sDrain=%0d sIso=%0d sReset-early=%0d sReset-late=%0d sRelease=%0d reraise-in-sReset=%0d",
+             n_rd[0], n_rd[1], n_rd[2], n_rd[3], n_rd[4], n_rd[5], n_rd[6], n_rd[7]);
+    if (!KEEP)
+      $display("full: lost-dirty=%0d foreign-lines=%0d foreign-grant=%0d nton-stale=%0d reacquire-stale=%0d gate-acks=%0d skipped-checks=%0d",
+               n_lost_dirty, n_foreign_lines, n_foreign_grant, n_nton_stale, n_reacq_stale, n_gate_ack, n_skipped);
     if (scen == 5) begin
-      $write("triggers hit:"); for (int c = 1; c <= 12; c++) $write(" C%0d=%0d", c, n_trig_hit[c]); $display("");
-      $write("triggers missed:"); for (int c = 1; c <= 12; c++) $write(" C%0d=%0d", c, n_trig_miss[c]); $display("");
+      $write("triggers hit:"); for (int c = 1; c <= 15; c++) $write(" C%0d=%0d", c, n_trig_hit[c]); $display("");
+      $write("triggers missed:"); for (int c = 1; c <= 15; c++) $write(" C%0d=%0d", c, n_trig_miss[c]); $display("");
     end
     if (scen == 7)
       $display("debug-hold: holds=%0d snoops-during-hold=%0d (dirty %0d) longest-snoop-to-ProbeAck=%0d served-by-L2-alone=%0d waited-for-the-release=%0d longest-after-release=%0d data-from-hot-L1D=%0d crossed-an-eviction=%0d",
@@ -797,19 +980,22 @@ module cr_tb;
       for (int w = 0; w < NWHEN; w++)
         $display("directed %-26s dirty toN=%0d toB=%0d | clean-T toN=%0d toB=%0d | B toN=%0d", WNAME[w],
                  n_dir[w][3][2], n_dir[w][3][1], n_dir[w][2][2], n_dir[w][2][1], n_dir[w][1][2]);
-      $display("directed: start-of-sFlush offered-in-sFlush=%0d later=%0d", n_d3_flush, n_d3_later);
-      $display("directed: first-cycle-of-sDrain offered-in-sDrain=%0d transition-later=%0d", n_d4_drain, n_d4_later);
-      $display("directed: last-cycle-of-sFlush offered-in-sFlush=%0d later=%0d", n_d5_last, n_d5_later);
-      $display("directed: dirty lines whose L2 copy was stale before the Probe=%0d, skipped=%0d, swept-lines-probed=%0d (of them dirty before the sweep %0d)",
-               n_dir_stale_l2, n_dir_skip, n_dir_swept, n_dir_swept_data);
+      $display("directed: start-of-sQuiesce offered-in-sQuiesce=%0d later=%0d", n_dh[3], n_dl[3]);
+      $display("directed: first-cycle-of-sDrain offered-in-sDrain=%0d transition-later=%0d", n_dh[4], n_dl[4]);
+      $display("directed: last-cycle-of-sQuiesce offered-in-sQuiesce=%0d later=%0d", n_dh[5], n_dl[5]);
+      $display("directed: first-cycle-of-sIso offered-in-sIso=%0d later=%0d", n_dh[6], n_dl[6]);
+      $display("directed: decision-cycle offered-in-decision=%0d later=%0d", n_dh[7], n_dl[7]);
+      $display("directed: coreup-cycle offered-in-sRelease=%0d later=%0d", n_dh[8], n_dl[8]);
+      $display("directed: dirty lines whose L2 copy was stale before the Probe=%0d, skipped=%0d, lost-lines-answered-by-the-gate=%0d (of them dirty %0d)",
+               n_dir_stale_l2, n_dir_skip, n_dir_gate, n_dir_gate_lost);
     end
     e_tb += e_mon + e_sb;
-    $display("config: KEEP=%0d SWEEP=%0d RST_CYCLES=%0d", KEEP, !KEEP, RST_CYCLES);
-    $display("final: resets=%0d reset-points=%0d dcache-ops=%0d ul-ops=%0d icachectrl-ops=%0d probes=%0d spurious-probes=%0d snoops-served-by-L2-alone=%0d acquire-perm=%0d releases-during-quiesce=%0d (with data %0d) lines-kept=%0d probes-held=%0d probes-answered-by-gate=%0d errors=%0d",
+    $display("config: KEEP=%0d FULL=%0d ISO=%0d RST_CYCLES=%0d", KEEP, !KEEP, ISO, RST_CYCLES);
+    $display("final: resets=%0d reset-points=%0d dcache-ops=%0d ul-ops=%0d icachectrl-ops=%0d probes=%0d spurious-probes=%0d snoops-served-by-L2-alone=%0d acquire-perm=%0d lines-kept=%0d probes-held=%0d probes-answered-by-gate=%0d errors=%0d",
              n_resets, n_rp, n_dc_acc + n_dc, n_ul_acc + n_ul, n_ul2_acc + n_ul2, n_probe, n_spur, n_l2only, n_perm,
-             n_swept, n_swept_dirty, n_warm, n_held, n_gate_ack, e_tb);
+             n_warm, n_held, n_gate_ack, e_tb);
     if (!expect_errors) begin
-      if (e_tb == 0 && n_dc_acc + n_dc > 200 && n_ul_acc + n_ul > 20 && n_ul2_acc + n_ul2 > 20 && (KEEP ? n_warm > 0 : n_swept > 0))
+      if (e_tb == 0 && n_dc_acc + n_dc > 200 && n_ul_acc + n_ul > 20 && n_ul2_acc + n_ul2 > 20 && (KEEP ? n_warm > 0 : n_rp > 0))
         $display("RESULT: PASS"); else $display("RESULT: FAIL");
     end else begin
       if (e_tb != 0) $display("RESULT: PASS (problem reproduced, as expected)"); else $display("RESULT: FAIL (no error observed)");
@@ -823,9 +1009,10 @@ module cr_tb;
     if (!$value$plusargs("SEED=%d", seed)) seed = 1;
     void'($urandom(seed));
     slow_en = $test$plusargs("SLOW") || scen >= 5;
-    $display("=== core-only reset v5: scenario %0d, seed %0d, slow %0d, KEEP %0d (sweep %0d), rstCycles %0d ===", scen, seed, slow_en, KEEP, !KEEP, RST_CYCLES);
+    $display("=== core-only reset v6: scenario %0d, seed %0d, slow %0d, KEEP %0d (FULL %0d), isoCycles %0d, rstCycles %0d ===", scen, seed, slow_en, KEEP, !KEEP, ISO, RST_CYCLES);
     sys_rst = 1; traffic_en = 0; snoop_en = 0; req_task = 0; force_core_rst = 0; spur_en = !$test$plusargs("NOSPUR");
     trig_arm = 0; trig_sel = 0; fsnp_req = 0; fsnp_arm = 0; fsnp_addr = 0; fsnp_param = 0;
+    for (int i = 0; i < 8; i++) n_rd[i] = 0;
     cycles(5); sys_rst = 0; cycles(5);
     traffic_en = 1; snoop_en = 1;
     cycles(3000);
@@ -834,7 +1021,7 @@ module cr_tb;
       2: begin for (int k = 0; k < 12; k++) begin core_reset(1); cycles($urandom_range(0, 400)); end cycles(2000); finish(0); end
       3: begin for (int k = 0; k < 4; k++) begin core_reset($urandom_range(2, 2000)); cycles(2000); end finish(0); end
       5: begin
-        for (int r = 0; r < 3; r++) for (int c = 1; c <= 12; c++) begin core_reset_on(c); cycles($urandom_range(50, 600)); end
+        for (int r = 0; r < 3; r++) for (int c = 1; c <= 15; c++) begin core_reset_on(c); cycles($urandom_range(50, 600)); end
         finish(0);
       end
       6: begin
@@ -847,6 +1034,14 @@ module cr_tb;
       end
       7: begin
         for (int k = 0; k < 4; k++) begin debug_hold($urandom_range(2000, 20000)); cycles($urandom_range(100, 2000)); end
+        finish(0);
+      end
+      8: begin
+        for (int k = 0; k < 3; k++) for (int v = 0; v < 4; v++) begin seq_in_row(v); cycles($urandom_range(100, 1500)); end
+        finish(0);
+      end
+      9: begin
+        for (int k = 0; k < 3; k++) for (int w = 0; w < 8; w++) begin drop_in(w); cycles($urandom_range(100, 1500)); end
         finish(0);
       end
       4: begin

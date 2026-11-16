@@ -1,41 +1,50 @@
 // ============================================================================
-// cr_dcache: behavioral model of the L1 DCache for the XSCore-only reset (v5): TL-C client with
+// cr_dcache: behavioral model of the L1 DCache for the XSCore-only reset (v6): TL-C client with
 //   MissQueue (1 entry), WritebackQueue (2 Release entries + the ProbeAck slot pa), ProbeQueue (entry pq_v and
-//   the register in front of MainPipe pq_sel), MainPipe with three stages s1..s3 and DCacheFlushUnit
-//   (FlushUnit.scala). Random loads/stores, golden memory updated where a store is applied (MainPipe s3, or the
-//   refill of a store miss).
-//   MainPipe: probes (K_PROBE), stores (K_STORE) and flush requests of the sweep (K_FLUSH, lowest priority).
-//     A request enters s1 only if no request of the same set is in s1..s3 (set-conflict check), moves one stage
-//     per cycle and is applied in s3, after a data-write delay dw of 0..2 cycles (0..6 with slow). In s3:
+//   the register in front of MainPipe pq_sel), MainPipe with three stages s1..s3 and DCacheQuiesceUnit
+//   (QuiesceUnit.scala, model cr_quiesce). Random loads/stores, golden memory updated where a store is applied
+//   (MainPipe s3, or the refill of a store miss).
+//   MainPipe: probes (K_PROBE) and stores (K_STORE). A request enters s1 only if no request of the same set is in
+//     s1..s3 (set-conflict check), moves one stage per cycle and is applied in s3, after a data-write delay dw of
+//     0..2 cycles (0..6 with slow). In s3:
 //       K_PROBE : report and data of the line, new coherence state; ProbeAck into the slot pa (needs it free)
 //       K_STORE : hit T/D -> write; hit B -> BtoT upgrade through the MissQueue; miss -> AcquireBlock /
 //                 AcquirePerm (full-line store) with a victim, if the MissQueue and the victim allow; else replay
-//       K_FLUSH : (sweep) a valid line -> Release / ReleaseData into a free WritebackQueue entry, line invalid.
-//                 It does not wait for the ProbeQueue (a Probe in the ProbeQueue waits for the set of this
-//                 flush to leave MainPipe: waiting the other way round would deadlock).
-//   Exact emptiness flags, the same four as DCacheFlushUnit in the RTL:
+//   There is NO walk over the lines (v6): the drain only waits for the transactions to end.
+//   Exact emptiness flags, the same four as DCacheQuiesceUnit in the RTL:
 //     mq_empty  MissQueue empty            wb_empty WritebackQueue (Releases, ProbeAck slot, beat in transfer)
 //     mp_empty  nothing in s1..s3          pq_empty no Probe in the ProbeQueue or in front of MainPipe
-//   flush unit: F_IDLE -req-> F_DRAIN -idle-> F_SWEEP (sweep) / F_DONE (keep); F_SWEEP: one flush request per
-//     (set, way), way-major; F_WAIT -no flush request in MainPipe and idle-> F_DONE.
+//   quiesce unit (cr_quiesce): sIdle -req-> sDrain -idle-> sDone; block = not sIdle: no new store, atomic, CMO or
+//     miss; loads that hit and Probes go on.
 //   KEEP = 1 (CoreResetKeepL1): the coherence meta (st) is on the tile reset (meta_rst), tags/data are never
-//   reset (SRAMs, writes masked by freeze): L1D keeps its lines. KEEP = 0 (sweep): meta on the core reset.
+//   reset (SRAMs, accesses masked by freeze): L1D keeps its lines. KEEP = 0 (FULL): meta and tags on the core
+//   reset (the tag array initialisation counter clears the tags), L1D is empty after the reset.
+//   Array accesses (v6): six enables (tag / data / meta, read / write) are modelled with their clamp. KEEP: every
+//   enable is masked by freeze at the module boundary (reads of the SRAMs and of the meta / error arrays, writes
+//   of all arrays); the write stage is registered one cycle after s3 (wen_reg), so a write that left s3 in the
+//   cycle before freeze rises still happens. arr_access = any enable that gets through. Loads run on in sQuiesce,
+//   sDrain and sIso (not in reset), so the read clamp has something to clamp.
 //   Reset domain crossing: right after the core reset is asserted (1..4 cycles) every output of the DCache and
-//   every write enable of its arrays is random (GARBAGE); the isolation on the tile side must keep it from L2.
+//   every enable of its arrays is random (GARBAGE); the isolation on the tile side must keep it from L2, and
+//   freeze (which must stand a cycle before the reset: freeze && freeze_q) from the arrays that survive.
 // Simplified TileLink: see cr_env_models.sv.
-// Mutants: FLUSH_MUTANT_NO_BLOCK, FLUSH_MUTANT_NO_WBQ_WAIT, FLUSH_MUTANT_NO_MP_WAIT, FLUSH_MUTANT_NO_SWEEP,
-//   FLUSH_MUTANT_SWEEP_NO_WAIT, FLUSH_MUTANT_SWEEP_NO_DATA, FLUSH_MUTANT_SWEEP_ONE_WAY, META_MUTANT_CORE_RESET,
-//   NOKEEP_MUTANT_META_KEPT, FREEZE_MUTANT_NO_SRAM_MASK,
-//   TAG_MUTANT_CORE_RESET (KEEP: the tag array is cleared on the core reset, the meta keeps the lines).
+// Mutants: QUIESCE_MUTANT_NO_BLOCK, QUIESCE_MUTANT_NO_WBQ_WAIT / _NO_MP_WAIT / _NO_MQ_WAIT (in cr_quiesce),
+//   META_MUTANT_CORE_RESET, NOKEEP_MUTANT_META_KEPT, FREEZE_MUTANT_NO_SRAM_MASK (writes not masked),
+//   FREEZE_MUTANT_NO_READ_MASK (reads not masked), TAG_MUTANT_CORE_RESET (KEEP: the tag array is cleared on the
+//   core reset, the meta keeps the lines).
 // ============================================================================
 module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEEP = 1, parameter bit GARBAGE = 1) (
   input  logic clk, rst,                 // rst = core reset
   input  logic meta_rst,                 // tile reset: coherence meta array (L1CohMetaArray)
   input  logic traffic_en,               // core is executing (random loads/stores)
   input  logic slow,                     // the ProbeQueue is sometimes not ready, long data-write delays
-  input  logic flush_req, input logic freeze, output logic flush_done, output logic flush_idle,
+  input  logic quiesce_req, input logic freeze, output logic quiesce_done, output logic quiesce_idle,
   output logic alive,                    // control logic out of reset
   output logic busy_true,                // the real state: some part of the control logic is not empty (tb only)
+  output logic arr_access,               // an array enable gets through the clamp in this cycle (tb: S15)
+  output logic ev_store, ev_miss,        // a store enters MainPipe / a miss is allocated in this cycle (tb: S18)
+  output logic ld_try,                   // a core load looks up the arrays in this cycle (before the clamp)
+  output int   n_loads_clamped, n_garbage_masked,
   output logic ld_v, output logic [3:0] ld_addr, output logic [31:0] ld_data,   // load hit (checked by the tb)
   output logic        a_valid, input  logic a_ready, output logic [2:0] a_op, output logic [1:0] a_param,
   output logic [3:0]  a_src, output logic [3:0] a_addr, output logic [31:0] a_data,
@@ -51,34 +60,21 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
   output int          n_ops
 );
   localparam logic [1:0] N = 2'd0, B = 2'd1, T = 2'd2, D = 2'd3;
-  localparam bit SWEEP = !KEEP;
   localparam int WB = $clog2(NW), SB = $clog2(NS);
-  localparam logic [1:0] K_PROBE = 2'd0, K_STORE = 2'd1, K_FLUSH = 2'd2;
-  localparam logic [2:0] F_IDLE = 3'd0, F_DRAIN = 3'd1, F_SWEEP = 3'd2, F_WAIT = 3'd3, F_DONE = 3'd4;
-  // sweep mutants
-`ifdef FLUSH_MUTANT_NO_SWEEP
-  localparam bit NO_SWEEP = 1;        // the drain only: L1D is reset with its lines (the removed full reset)
+  localparam logic [1:0] K_PROBE = 2'd0, K_STORE = 2'd1;
+`ifdef FREEZE_MUTANT_NO_SRAM_MASK
+  localparam bit CLAMP_W = 0;           // mutant: array writes not masked by freeze
 `else
-  localparam bit NO_SWEEP = 0;
+  localparam bit CLAMP_W = 1;
 `endif
-`ifdef FLUSH_MUTANT_SWEEP_NO_WAIT
-  localparam bit SWEEP_NO_WAIT = 1;   // done right after the last flush request, Releases still queued
+`ifdef FREEZE_MUTANT_NO_READ_MASK
+  localparam bit CLAMP_R = 0;           // mutant: array reads (tag, data, meta) not masked by freeze
 `else
-  localparam bit SWEEP_NO_WAIT = 0;
-`endif
-`ifdef FLUSH_MUTANT_SWEEP_NO_DATA
-  localparam bit SWEEP_NO_DATA = 1;   // a dirty line is released without its data
-`else
-  localparam bit SWEEP_NO_DATA = 0;
-`endif
-`ifdef FLUSH_MUTANT_SWEEP_ONE_WAY
-  localparam bit SWEEP_ONE_WAY = 1;   // the sweep stops after way 0
-`else
-  localparam bit SWEEP_ONE_WAY = 0;
+  localparam bit CLAMP_R = 1;
 `endif
 
   // outputs as computed by the (running) DCache; the ports carry them, or garbage right after the reset
-  logic a_valid_i, b_ready_i, c_valid_i, d_ready_i, e_valid_i, flush_done_i, flush_idle_i, alive_i;
+  logic a_valid_i, b_ready_i, c_valid_i, d_ready_i, e_valid_i, quiesce_done_i, quiesce_idle_i, alive_i;
   logic [2:0] a_op_i, c_op_i, c_param_i; logic [1:0] a_param_i; logic [3:0] a_src_i, a_addr_i, c_src_i, c_addr_i, e_sink_i;
   logic [31:0] a_data_i, c_data_i;
   logic [1:0]  st  [NS][NW];
@@ -98,10 +94,10 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
   logic mv [4]; logic [1:0] mk [4]; logic [3:0] ma [4]; logic [31:0] mval [4]; logic [1:0] mcap [4]; logic [WB-1:0] mw [4];
   logic mperm [4];
   int dw;                                   // data-write delay of the request in s3
-  // flush unit
-  logic [2:0] fst; logic [SB-1:0] fset; logic [WB-1:0] fway; logic [2:0] inflight;
-  wire block = fst != F_IDLE;
-  assign flush_done_i = fst == F_DONE;
+  // quiesce unit
+  logic q_block, q_done, q_idle, q_alive;
+  wire block = q_block;
+  assign quiesce_done_i = q_done;
   // C channel: second beat of a data message
   logic c_busy, c_isprobe; int c_wbi;
   logic [2:0] cl_param; logic [3:0] cl_addr, cl_src; logic [31:0] cl_data;
@@ -129,7 +125,7 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
   // a MainPipe stage other than skip works on this line (or on its set, for a flush request)
   function automatic logic mp_line_busy(input logic [3:0] addr, input int skip);
     for (int i = 1; i <= 3; i++)
-      if (i != skip && mv[i] && (mk[i] == K_FLUSH ? ma[i][SB-1:0] == addr[SB-1:0] : ma[i] == addr)) return 1'b1;
+      if (i != skip && mv[i] && ma[i] == addr) return 1'b1;
     return 1'b0;
   endfunction
   // way for a new line: an invalid way, else the victim vw_rnd if it can be evicted now (free WritebackQueue
@@ -147,19 +143,14 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
     return 1'b0;
   endfunction
 
-  // ---------------- emptiness flags (DCacheFlushUnit) ----------------
+  // ---------------- emptiness flags (DCacheQuiesceUnit) ----------------
   wire mq_empty = !mq_v;
   wire wb_empty = !wb_v[0] && !wb_v[1] && !pa_v && !c_busy;
   wire mp_empty = !mv[1] && !mv[2] && !mv[3];
   wire pq_empty = !pq_v && !pq_sel;
-`ifdef FLUSH_MUTANT_NO_WBQ_WAIT
-  wire idle = mq_empty && mp_empty && pq_empty;              // mutant: Releases / ProbeAcks not waited for
-`elsif FLUSH_MUTANT_NO_MP_WAIT
-  wire idle = mq_empty && wb_empty && pq_empty;              // mutant: MainPipe not waited for
-`else
-  wire idle = mq_empty && wb_empty && mp_empty && pq_empty;
-`endif
-  assign flush_idle_i = idle;
+  cr_quiesce u_q (.clk, .rst, .req(quiesce_req), .mq_empty, .wbq_empty(wb_empty), .mp_empty, .pq_empty,
+                  .block(q_block), .done(q_done), .idle(q_idle), .alive(q_alive));
+  assign quiesce_idle_i = q_idle;
   assign busy_true = !(mq_empty && wb_empty && mp_empty && pq_empty);
 
   // ---------------- C channel: second beat, then the ProbeAck slot, then Releases ----------------
@@ -207,71 +198,83 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
   assign c_addr = garb ? gr[29:26] : c_addr_i; assign c_data = garb ? ~gr2 : c_data_i;
   assign d_ready = garb ? gr[30] : d_ready_i;
   assign e_valid = garb ? gr[31] : e_valid_i;  assign e_sink = garb ? gr2[3:0] : e_sink_i;
-  assign flush_done = garb ? gr2[4] : flush_done_i;
-  assign flush_idle = garb ? gr2[6] : flush_idle_i;
+  assign quiesce_done = garb ? gr2[4] : quiesce_done_i;
+  assign quiesce_idle = garb ? gr2[6] : quiesce_idle_i;
   assign alive = garb ? gr2[5] : alive_i;
 
   logic [31:0] rnd; always_ff @(posedge clk) rnd <= $urandom;
 
   // ---------------- MainPipe s3: can the request be applied in this cycle ----------------
-  wire s3_line_valid = mv[3] && mk[3] == K_FLUSH && st[ma[3][SB-1:0]][mw[3]] != N;
   logic s3_go;
   always_comb begin
     s3_go = 1'b0;
     if (mv[3] && dw == 0)
       case (mk[3])
         K_PROBE: s3_go = !pa_v;
-        K_STORE: s3_go = 1'b1;                                   // applied, or replayed (not modelled further)
-        default: s3_go = !s3_line_valid || (wb_free() >= 0 &&
-                         !wb_conflict({tg[ma[3][SB-1:0]][mw[3]], ma[3][SB-1:0]}));
+        default: s3_go = 1'b1;                                   // K_STORE: applied, or replayed (not modelled further)
       endcase
   end
   wire s3_free = !mv[3] || s3_go;
   wire s2_move = mv[2] && s3_free;
   wire s1_move = mv[1] && (!mv[2] || s2_move);
   wire s1_free = !mv[1] || s1_move;
-  // s0 arbitration: Probe > store > flush; the set must not be in MainPipe
+  // s0 arbitration: Probe > store; the set must not be in MainPipe
   wire pq_go = pq_sel && s1_free && !mp_set_busy(pq_addr[SB-1:0], 0) && !wb_conflict(pq_addr);
-`ifdef FLUSH_MUTANT_NO_BLOCK
-  wire st_try = traffic_en && rnd[1:0] == 2'b00 && rnd[8] && (!block || rnd[10]);   // stores keep coming in the flush
+`ifdef QUIESCE_MUTANT_NO_BLOCK
+  wire st_try = traffic_en && rnd[1:0] == 2'b00 && rnd[8] && (!block || rnd[10]);   // mutant: stores keep coming in the drain
 `else
   wire st_try = traffic_en && !block && rnd[1:0] == 2'b00 && rnd[8];
 `endif
   wire [3:0] st_addr = rnd[7:4];
   wire st_go = st_try && !pq_go && s1_free && !mp_set_busy(st_addr[SB-1:0], 0);
-  wire fl_go = fst == F_SWEEP && !NO_SWEEP && !pq_go && !st_go && s1_free && !mp_set_busy(fset, 0);
+  // ---- array accesses (six enables, see the header): raw requests, the clamp, the registered write stage
+  logic ev_miss_r, ev_store_r, wr_q, freeze_q; int nlc = 0, ngm = 0;
+  assign ev_miss = ev_miss_r; assign ev_store = ev_store_r;
+  assign n_loads_clamped = nlc; assign n_garbage_masked = ngm;
+  always_ff @(posedge clk) freeze_q <= freeze;
+  assign ld_try = traffic_en && rnd[1:0] == 2'b00 && !rnd[8];
+  wire rd_clamped = KEEP && CLAMP_R && freeze;                    // reads of tag / data SRAM and of meta / error
+  wire wr_clamped = KEEP && CLAMP_W && freeze;                    // writes of every array, at the input of the write stage
+  wire rd_raw = ld_try || mv[1];
+  wire refill_w = d_valid && d_ready_i && (d_op == 3'd4 || (d_op == 3'd5 && mq_dbeat));
+  wire wr_raw = (mv[3] && s3_go) || refill_w;
+  wire garb_rd = KEEP && garb && gr2[20];
+  wire garb_rd_masked = garb_rd && CLAMP_R && freeze && freeze_q;
+  assign arr_access = (rd_raw && !rd_clamped) || wr_q || (garb_rd && !garb_rd_masked);
 
   always_ff @(posedge clk) begin
-    gold_we <= 1'b0; gold_we2 <= 1'b0; ld_v <= 1'b0;
+    gold_we <= 1'b0; gold_we2 <= 1'b0; ld_v <= 1'b0; ev_miss_r <= 1'b0; ev_store_r <= st_go; wr_q <= wr_raw && !wr_clamped;
     if (rst) begin
 `ifdef META_MUTANT_CORE_RESET
       for (int s = 0; s < NS; s++) for (int w = 0; w < NW; w++) st[s][w] <= N;     // KEEP mutant: meta on the core reset
 `elsif NOKEEP_MUTANT_META_KEPT
       if (meta_rst) for (int s = 0; s < NS; s++) for (int w = 0; w < NW; w++) st[s][w] <= N;  // no-KEEP mutant: meta survives
 `else
-      // KEEP: meta on the tile reset; sweep: meta on the core reset (L1D starts empty)
+      // KEEP: meta on the tile reset; FULL: meta on the core reset (L1D starts empty)
       if (meta_rst || !KEEP) for (int s = 0; s < NS; s++) for (int w = 0; w < NW; w++) st[s][w] <= N;
 `endif
-      // the write enables of the arrays come from the control logic, random while the reset ripples; with
-      // KEEP the arrays survive the reset and freeze masks the writes (DCacheWrapper)
-`ifdef FREEZE_MUTANT_NO_SRAM_MASK
-      if (garb && gr2[8]) begin                            // mutant: tag / data SRAM writes not masked
-        tg[gr2[10:9] % NS][gr2[11] % NW] <= gr2[13:12]; dat[gr2[10:9] % NS][gr2[11] % NW] <= gr;
+      // the enables of the arrays come from the control logic, random while the reset ripples; with KEEP the
+      // arrays survive the reset and freeze masks them at the module boundary (DCacheImp). freeze must have stood
+      // a cycle before the reset: freeze && freeze_q (with NO_ISO_LEAD it does not, and the arrays are hit)
+      if (KEEP && garb && gr2[8]) begin
+        if (CLAMP_W && freeze && freeze_q) ngm <= ngm + 1;
+        else begin tg[gr2[10:9] % NS][gr2[11] % NW] <= gr2[13:12]; dat[gr2[10:9] % NS][gr2[11] % NW] <= gr; end
       end
-`else
-      if (garb && gr2[8] && !freeze) begin
-        tg[gr2[10:9] % NS][gr2[11] % NW] <= gr2[13:12]; dat[gr2[10:9] % NS][gr2[11] % NW] <= gr;
+      if (KEEP && garb_rd_masked) ngm <= ngm + 1;
+      if (KEEP && garb && gr2[14]) begin
+        if (CLAMP_W && freeze && freeze_q) ngm <= ngm + 1;
+        else st[gr2[16:15] % NS][gr2[17] % NW] <= gr2[19:18];
       end
-`endif
 `ifdef TAG_MUTANT_CORE_RESET
       if (KEEP) for (int s = 0; s < NS; s++) for (int w = 0; w < NW; w++) tg[s][w] <= 2'd0;   // KEEP mutant: tag init counter on the core reset
 `endif
-      if (garb && gr2[14] && !freeze && KEEP) st[gr2[16:15] % NS][gr2[17] % NW] <= gr2[19:18];
+      // FULL: the tag array initialisation counter (TagSRAMBank.rst_cnt) clears the tags after the core reset
+      if (!KEEP) for (int s = 0; s < NS; s++) for (int w = 0; w < NW; w++) tg[s][w] <= 2'd0;
       mq_v <= 1'b0; mq_sent <= 1'b0; mq_gotd <= 1'b0; mq_dbeat <= 1'b0; mq_perm <= 1'b0;
       for (int i = 0; i < 2; i++) begin wb_v[i] <= 1'b0; wb_sent[i] <= 1'b0; end
       pa_v <= 1'b0; pq_v <= 1'b0; pq_sel <= 1'b0; c_busy <= 1'b0;
       for (int i = 1; i <= 3; i++) mv[i] <= 1'b0;
-      dw <= 0; fst <= F_IDLE; fset <= '0; fway <= '0; inflight <= '0; n_ops <= 0;
+      dw <= 0; n_ops <= 0;
     end else begin
       // ---- B: accept a Probe into the ProbeQueue; one cycle later it is selected for MainPipe
       if (b_valid && b_ready_i) begin pq_v <= 1'b1; pq_sel <= 1'b0; pq_addr <= b_addr; pq_param <= b_param; end
@@ -344,17 +347,17 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
             end
             pa_v <= 1'b1; pa_op <= op; pa_param <= par; pa_addr <= a3; pa_data <= pd;
           end
-          K_STORE: begin
+          K_STORE: if (!wr_clamped) begin    // KEEP, frozen: the writes of the store (meta, tag, data) do not get through
             automatic int w = find_way(a3);
             if (w >= 0 && (st[a3[1:0]][w] == T || st[a3[1:0]][w] == D)) begin
               st[a3[1:0]][w] <= D; dat[a3[1:0]][w] <= mval[3];
               gold_we <= 1'b1; gold_addr <= a3; gold_data <= mval[3]; n_ops <= n_ops + 1;
             end else if (w >= 0) begin
               // BtoT upgrade: the B copy stays valid until the refill (a Probe meanwhile is answered BtoN);
-              // a miss request from MainPipe is blocked by flushBlock (DCacheWrapper: missQueue.io.req.valid := false)
+              // a miss request from MainPipe is blocked by quiesceBlock (DCacheImp: missQueue.io.req.valid := false)
               if (!mq_v && !block && !wb_conflict(a3)) begin
                 mq_v <= 1'b1; mq_sent <= 1'b0; mq_addr <= a3; mq_store <= 1'b1; mq_val <= mval[3]; mq_way <= WB'(w);
-                mq_grow <= 2'd2; mq_perm <= 1'b0;
+                mq_grow <= 2'd2; mq_perm <= 1'b0; ev_miss_r <= 1'b1;
               end
             end else if (!mq_v && !block && !wb_conflict(a3)) begin
               automatic int vw;
@@ -369,20 +372,11 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
                 mq_v <= 1'b1; mq_sent <= 1'b0; mq_addr <= a3; mq_store <= 1'b1; mq_val <= mval[3]; mq_way <= WB'(vw);
                 mq_grow <= 2'd1;
                 mq_perm <= mperm[3];   // a store that overwrites the whole line: AcquirePerm (no data from L2)
+                ev_miss_r <= 1'b1;
               end
             end
           end
-          default: begin   // K_FLUSH
-            automatic logic [SB-1:0] s = a3[SB-1:0];
-            automatic logic [1:0] cs = st[s][mw[3]];
-            if (cs != N) begin
-              automatic int f = wb_free();
-              wb_v[f] <= 1'b1; wb_sent[f] <= 1'b0; wb_addr[f] <= {tg[s][mw[3]], 2'(s)};
-              wb_hasd[f] <= (cs == D) && !SWEEP_NO_DATA;
-              wb_data[f] <= dat[s][mw[3]]; wb_param[f] <= (cs == B) ? 3'd2 : 3'd1;    // BtoN / TtoN
-              st[s][mw[3]] <= N;
-            end
-          end
+          default: ;
         endcase
       end
       // ---- MainPipe stage moves and s0
@@ -399,19 +393,17 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
         if (b_valid && b_ready_i) $error("[%0t] DCache model: Probe accepted while the ProbeQueue entry is in use", $time);
       end else if (st_go) begin
         mv[1] <= 1'b1; mk[1] <= K_STORE; ma[1] <= st_addr; mval[1] <= $urandom; mperm[1] <= rnd[9];
-      end else if (fl_go) begin
-        mv[1] <= 1'b1; mk[1] <= K_FLUSH; ma[1] <= {2'b00, 2'(fset)}; mw[1] <= fway;
       end else if (s1_move) mv[1] <= 1'b0;
-      inflight <= inflight + 3'(fl_go) - 3'(s3_go && mk[3] == K_FLUSH);
 
       // ---- core loads (hits read the arrays directly; misses go to the MissQueue). A line whose set is in
       // MainPipe is not read (its store / probe is applied in s3)
-      if (traffic_en && rnd[1:0] == 2'b00 && !rnd[8]) begin
+      if (ld_try && rd_clamped) nlc <= nlc + 1;       // the read of the arrays is masked by freeze: no answer, no load
+      if (ld_try && !rd_clamped) begin
         automatic logic [3:0] addr = rnd[7:4];
         automatic int w = find_way(addr);
         if (w >= 0 && !mp_set_busy(addr[1:0], 0) && !(pq_v && pq_addr == addr)) begin
           n_ops <= n_ops + 1; ld_v <= 1'b1; ld_addr <= addr; ld_data <= dat[addr[1:0]][w];
-        end else if (w < 0 && !block && !mq_v && !wb_conflict(addr) && !(pq_v && pq_addr == addr) &&
+        end else if (w < 0 && !block && !wr_clamped && !mq_v && !wb_conflict(addr) && !(pq_v && pq_addr == addr) &&
                    !mp_set_busy(addr[1:0], 0) && !(s3_go && mk[3] == K_STORE)) begin
           automatic int vw;
           if (can_alloc(addr, int'(rnd[12 +: WB]), 0, vw)) begin
@@ -423,43 +415,24 @@ module cr_dcache #(parameter int NS = 4, parameter int NW = 2, parameter bit KEE
               st[addr[1:0]][vw] <= N;
             end
             mq_v <= 1'b1; mq_sent <= 1'b0; mq_addr <= addr; mq_store <= 1'b0; mq_val <= '0; mq_way <= WB'(vw);
-            mq_grow <= 2'd0; mq_perm <= 1'b0;
+            mq_grow <= 2'd0; mq_perm <= 1'b0; ev_miss_r <= 1'b1;
           end
         end
       end
 
-      // ---- flush unit (DCacheFlushUnit)
-      case (fst)
-        F_IDLE:  if (flush_req) fst <= F_DRAIN;
-        F_DRAIN: begin
-          if (!flush_req) fst <= F_IDLE;
-          else if (idle) begin fst <= (SWEEP && !NO_SWEEP) ? F_SWEEP : F_DONE; fset <= '0; fway <= '0; end
-        end
-        F_SWEEP: begin
-          // CoreResetCtrl keeps flush_req high until done: the sweep always runs to its end
-          if (fl_go) begin
-            if (fset == SB'(NS - 1)) begin
-              fset <= '0; fway <= fway + 1'b1;
-              if (fway == WB'(NW - 1) || SWEEP_ONE_WAY) fst <= SWEEP_NO_WAIT ? F_DONE : F_WAIT;
-            end else fset <= fset + 1'b1;
-          end
-        end
-        F_WAIT:  if (inflight == 0 && idle) fst <= F_DONE;   // the last flush requests and ReleaseAcks
-        F_DONE:  if (!flush_req) fst <= F_IDLE;
-        default: fst <= F_IDLE;
-      endcase
     end
   end
 
-  // DCacheFlushUnit.alive: 0 while the control logic is in reset, 1 from the first cycle after it
-  logic alive_q; always_ff @(posedge clk) alive_q <= !rst;
-  assign alive_i = alive_q && !rst;
+  // DCacheQuiesceUnit.alive: 0 while the control logic is in reset, 1 from the first cycle after it
+  assign alive_i = q_alive;
   // the arrays that survive the core reset must not change while frozen (reset asserted / released)
   logic [1:0] st_q [NS][NW]; logic frz_q;
   always_ff @(posedge clk) begin
     frz_q <= freeze && !meta_rst;
     for (int a = 0; a < NS; a++) for (int b = 0; b < NW; b++) st_q[a][b] <= st[a][b];
 `ifndef NO_FREEZE_CHECK
+    if (KEEP && freeze && !meta_rst && arr_access && !(garb && garb_rd))
+      $error("[%0t] DCache: array access (tag / data / meta, read or write) while frozen", $time);
     if (KEEP && frz_q && freeze && !meta_rst)
       for (int a = 0; a < NS; a++) for (int b = 0; b < NW; b++)
         if (st[a][b] != st_q[a][b]) $error("[%0t] DCache: coherence meta of set %0d way %0d changed while frozen", $time, a, b);

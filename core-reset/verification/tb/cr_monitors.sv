@@ -1,18 +1,18 @@
 // ============================================================================
-// Independent checkers on the L2 side of the gates (they do not look at the gate counters). v5.
+// Independent checkers on the L2 side of the gates (they do not look at the gate counters). v6.
 //
 //   cr_txmon    : every TileLink transaction between XSCore and L2, from its first beat to its
 //                 last response: Acquire -> Grant(Data) -> GrantAck, Release(Data) -> ReleaseAck,
 //                 Probe -> ProbeAck(Data), Get / PutFull -> AccessAck(Data).
 //                 - the transactions open when the procedure starts are marked "pre";
 //                 - at the reset point no transaction may be open (the pre ones must be complete);
-//                 - nothing crosses the boundary in sReset / sRelease, no Probe crosses in sDrain;
+//                 - nothing crosses the boundary in sIso / sReset / sRelease, no Probe crosses in sDrain and sIso;
 //                 - no new request of a non-coherent agent after the start of the sequence (early block), and
 //                   none of them is open when sDrain starts;
 //                 - no Release starts after the DCache has reported its drain (l1.done);
 //                 - every response matches an open request (no stale or duplicated response);
 //                 - no transaction stays open longer than HANG cycles;
-//                 - with the sweep the gate answers Probes while the core is in reset: such a Probe and its
+//                 - with FULL the gate answers Probes while the core is in reset: such a Probe and its
 //                   ProbeAck (NtoN, from the gate) are tracked apart, they are not a transaction with the core.
 //   cr_probe_sb : every Probe and its ProbeAck: ProbeAckData carries the current (golden) data,
 //                 a ProbeAck without data from a T copy means L2's data is current, the report
@@ -21,8 +21,9 @@
 //                 kept in L1D across a core reset (served from the hot L1D). No Probe waits more than
 //                 MAX_WAIT cycles (a debugger may hold the reset request for any time); with KEEP the cycles
 //                 while the core is in reset do not count (the Probe waits there by design).
-//                 The report must match L2's directory exactly, in both configurations (NtoN only for a line
-//                 the directory lists as N: the sweep left nothing behind).
+//                 The report must match L2's directory; with FULL a line the directory still lists but L1D lost at
+//                 the reset (stale) may be reported NtoN (DESIGN 7.2 p. 2). Checks of data against the golden
+//                 memory skip the lines whose golden value is undefined (golden_valid = 0, DESIGN 7.2 p. 3).
 // ============================================================================
 
 // transaction classes (open states) used for triggers and coverage
@@ -39,7 +40,7 @@
 module cr_txmon #(parameter int HANG = 8000) (
   input  logic clk, rst,
   input  logic start,                    // the controller leaves sIdle at this edge
-  input  logic in_flush, in_drain, in_reset, in_release,
+  input  logic in_quiesce, in_drain, in_iso, in_reset, in_release,
   input  logic l1_done,
   input  logic b_gate, c_gate,           // this B beat is taken by the gate / this C beat comes from the gate
   // L2 side of the DCache gate (TL-C)
@@ -91,7 +92,7 @@ module cr_txmon #(parameter int HANG = 8000) (
   wire fbg = b_v && b_r && b_gate, fcg = c_v && c_r && c_gate;   // Probe taken / answered by the gate
   wire fua = ua_v && ua_r, fud = ud_v && ud_r;
   logic in_reset_q, in_drain_q;
-  wire in_proc = in_flush || in_drain || in_reset || in_release;
+  wire in_proc = in_quiesce || in_drain || in_iso || in_reset || in_release;
 
   task automatic err(input string m);
     errors++; $display("[%0t] ERROR txmon: %s", $time, m);
@@ -104,7 +105,7 @@ module cr_txmon #(parameter int HANG = 8000) (
     end
   endtask
   task automatic started(input int kind);
-    if (in_flush) n_started_flush[kind]++;
+    if (in_quiesce) n_started_flush[kind]++;
     if (in_drain) n_started_drain[kind]++;
   endtask
 
@@ -126,12 +127,12 @@ module cr_txmon #(parameter int HANG = 8000) (
           if (ul[i]  != NONE) n_open_at_start[ul[i]]++;
         end
       end
-      // ---- nothing crosses in sReset / sRelease
-      if ((in_reset || in_release) && (fa || fb || fc || fd || fe || fua || fud))
+      // ---- nothing crosses in sIso / sReset / sRelease
+      if ((in_iso || in_reset || in_release) && (fa || fb || fc || fd || fe || fua || fud))
         err($sformatf("TileLink beat between XSCore and L2 in %s (a%0d b%0d c%0d d%0d e%0d ua%0d ud%0d)",
-            in_reset ? "sReset" : "sRelease", fa, fb, fc, fd, fe, fua, fud));
-      // ---- sDrain: channel B is closed from its first cycle, no Probe crosses the gate
-      if (in_drain && (fb || fbg)) err("a Probe crosses the gate in sDrain");
+            in_iso ? "sIso" : in_reset ? "sReset" : "sRelease", fa, fb, fc, fd, fe, fua, fud));
+      // ---- sDrain and sIso: channel B is closed from the first cycle, no Probe crosses the gate
+      if ((in_drain || in_iso) && (fb || fbg)) err("a Probe crosses the gate in sDrain / sIso");
       // ---- the non-coherent agents: no new request once the sequence has started (channel A closed from
       // the first cycle of sFlush), none open when sDrain starts (a Get may wait for a Probe of L1D)
       if (in_proc && fua && ul[ua_src] == NONE) err($sformatf("new request of a non-coherent agent (source %0d) after the start of the sequence", ua_src));
@@ -153,7 +154,7 @@ module cr_txmon #(parameter int HANG = 8000) (
         if (acq[a_src] != NONE) err($sformatf("Acquire with source %0d already in flight", a_src));
         acq[a_src] = ACQ_WAIT; acq_pre[a_src] = 1'b0; acq_t[a_src] = cyc; started(0);
       end
-      // ---- the gate answers a Probe itself (sweep): one at a time, ProbeAck NtoN, nothing reaches the core
+      // ---- the gate answers a Probe itself (FULL): one at a time, ProbeAck NtoN, nothing reaches the core
       if (fbg) begin
         n_gate_probes++; gate_open++;
         if (gate_open > 1) err("the gate took a second Probe before answering the first");
@@ -173,7 +174,7 @@ module cr_txmon #(parameter int HANG = 8000) (
         case (c_op)
           3'd6, 3'd7: begin
             if (rel[c_src] == NONE) begin
-              if (l1_done || in_drain || in_reset || in_release) err("a Release starts after the DCache reported its drain (l1.done)");
+              if (l1_done || in_drain || in_iso || in_reset || in_release) err("a Release starts after the DCache reported its drain (l1.done)");
               rel_pre[c_src] = 1'b0; rel_t[c_src] = cyc; started(1);
               rel[c_src] = (c_op == 3'd7) ? REL_MID : REL_WAIT;
             end else if (rel[c_src] == REL_MID && c_op == 3'd7) rel[c_src] = REL_WAIT;
@@ -249,7 +250,7 @@ module cr_txmon #(parameter int HANG = 8000) (
     $display("");
     $display("txmon-pre-completed: acquire=%0d release=%0d probe=%0d uncached=%0d",
              n_pre_done[0], n_pre_done[1], n_pre_done[2], n_pre_done[3]);
-    $display("txmon-started-in-sFlush: acquire=%0d release=%0d probe=%0d uncached=%0d; in-sDrain: acquire=%0d release=%0d probe=%0d uncached=%0d",
+    $display("txmon-started-in-sQuiesce: acquire=%0d release=%0d probe=%0d uncached=%0d; in-sDrain: acquire=%0d release=%0d probe=%0d uncached=%0d",
              n_started_flush[0], n_started_flush[1], n_started_flush[2], n_started_flush[3],
              n_started_drain[0], n_started_drain[1], n_started_drain[2], n_started_drain[3]);
   endtask
@@ -258,7 +259,7 @@ endmodule
 // ---------------------------------------------------------------------------
 module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET = 0) (
   input  logic clk, rst,
-  input  logic in_flush, in_drain, in_reset, in_release, busy,
+  input  logic in_quiesce, in_drain, in_iso, in_reset, in_release, busy,
   input  logic rp, input logic rp_keep,            // reset point, and whether L1D is kept at it
   // L2 side of the DCache gate
   input  logic b_v, b_r, input logic [1:0] b_param, input logic [3:0] b_addr,
@@ -269,18 +270,19 @@ module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET =
   // state
   input  logic [1:0] dir [16], input logic [31:0] mem [16], input logic [31:0] golden [16],
   input  logic [1:0] l1 [16],                      // DCache state of every line: 0 N 1 B 2 T 3 dirty
+  input  logic [15:0] stale, input logic [15:0] gv,  // FULL: directory entries of lines L1D lost; golden value defined
   input  logic c_gate,                             // this C beat is the gate's ProbeAck
   // last ProbeAck (for the directed tests)
   output logic ack_v, output logic [3:0] ack_addr, output logic ack_data, output logic [31:0] ack_val,
-  output logic [2:0] ack_param, output int errors
+  output logic [2:0] ack_param, output logic ack_gate, output int errors
 );
-  // phase in which L2 first offered the Probe: 0 idle, 1 sFlush, 2 sDrain, 3 sReset, 4 sRelease
+  // phase in which L2 first offered the Probe: 0 idle, 1 sQuiesce, 2 sDrain, 3 sIso, 4 sReset, 5 sRelease
   int offer_ph; longint offer_t, cyc; logic b_v_q; int waited;
   int n_nton, n_gate_ack, n_wait_out_max;
   int pr_ph [16]; longint pr_t [16]; logic [1:0] pr_cap [16];
   logic [1:0] kept [16];           // state the line had in L1D at the last keep reset point (0: not kept)
   logic chk_v; logic [3:0] chk_addr; logic [1:0] chk_cap; logic chk_data; logic [31:0] chk_val;
-  int n_by_phase [5], n_held_max; logic wait_err;
+  int n_by_phase [6], n_held_max; logic wait_err;
   int n_hot [4];                   // ProbeAck from a line kept across the reset: [1] B, [2] clean T, [3] dirty
   int n_hot_toB, n_dirty_data, n_clean_ack_t, n_core_offer_bad;
   logic mid_q;                     // between the two beats of a ProbeAckData
@@ -289,7 +291,7 @@ module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET =
     errors++; $display("[%0t] ERROR probe-sb: %s", $time, m);
   endtask
   function automatic int phase();
-    return in_reset ? 3 : in_release ? 4 : in_drain ? 2 : in_flush ? 1 : 0;
+    return in_release ? 5 : in_reset ? 4 : in_iso ? 3 : in_drain ? 2 : in_quiesce ? 1 : 0;
   endfunction
 
   always_ff @(posedge clk) begin
@@ -327,17 +329,18 @@ module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET =
         chk_v <= 1'b0;
         if (chk_cap == 2'd2 && l1[chk_addr] != 2'd0) err($sformatf("line %0d still valid in L1D after a Probe toN", chk_addr));
         if (chk_cap == 2'd1 && l1[chk_addr] > 2'd1) err($sformatf("line %0d still T in L1D after a Probe toB", chk_addr));
-        if (mem[chk_addr] != golden[chk_addr]) err($sformatf("after the ProbeAck L2 holds %h for line %0d, current value %h", mem[chk_addr], chk_addr, golden[chk_addr]));
+        if (gv[chk_addr] && mem[chk_addr] != golden[chk_addr]) err($sformatf("after the ProbeAck L2 holds %h for line %0d, current value %h", mem[chk_addr], chk_addr, golden[chk_addr]));
         ack_v <= 1'b1; ack_addr <= chk_addr; ack_data <= chk_data; ack_val <= chk_val;
       end
       // ---- ProbeAck(Data): first beat carries the report and the data
       if (c_v && c_r && (c_op == 3'd4 || c_op == 3'd5) && !(c_op == 3'd5 && mid_q)) begin
         automatic logic [1:0] d = dir[c_addr];
         automatic logic ok_rep;
-        // report vs L2 directory: T -> TtoN/TtoB/TtoT, B -> BtoN/BtoB, N -> NtoN
+        // report vs L2 directory: T -> TtoN/TtoB/TtoT, B -> BtoN/BtoB, N -> NtoN; FULL: a stale entry (the line
+        // was lost with the reset of L1D) -> NtoN
         case (d)
-          2'd2:    ok_rep = c_param == 3'd1 || c_param == 3'd0 || c_param == 3'd3;
-          2'd1:    ok_rep = c_param == 3'd2 || c_param == 3'd4;
+          2'd2:    ok_rep = c_param == 3'd1 || c_param == 3'd0 || c_param == 3'd3 || (stale[c_addr] && c_param == 3'd5);
+          2'd1:    ok_rep = c_param == 3'd2 || c_param == 3'd4 || (stale[c_addr] && c_param == 3'd5);
           default: ok_rep = c_param == 3'd5;
         endcase
         if (ok_rep && c_param == 3'd5) n_nton++;
@@ -346,10 +349,10 @@ module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET =
                                    c_addr, c_param == 3'd5 ? "NtoN" : $sformatf("param %0d", c_param), d == 2 ? "T" : d == 1 ? "B" : "N"));
         if (c_op == 3'd5) begin
           n_dirty_data++;
-          if (c_data != golden[c_addr]) err($sformatf("ProbeAckData of line %0d carries %h, current value %h", c_addr, c_data, golden[c_addr]));
+          if (gv[c_addr] && c_data != golden[c_addr]) err($sformatf("ProbeAckData of line %0d carries %h, current value %h", c_addr, c_data, golden[c_addr]));
         end else if (d == 2'd2) begin
           n_clean_ack_t++;
-          if (mem[c_addr] != golden[c_addr]) err($sformatf("clean ProbeAck from T of line %0d, but L2 holds %h, current value %h (dirty data lost)", c_addr, mem[c_addr], golden[c_addr]));
+          if (gv[c_addr] && mem[c_addr] != golden[c_addr]) err($sformatf("clean ProbeAck from T of line %0d, but L2 holds %h, current value %h (dirty data lost)", c_addr, mem[c_addr], golden[c_addr]));
         end
         if (kept[c_addr] != 2'd0) begin
           n_hot[c_op == 3'd5 ? 3 : kept[c_addr]]++;
@@ -357,7 +360,7 @@ module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET =
           kept[c_addr] = 2'd0;
         end
         chk_v <= 1'b1; chk_addr <= c_addr; chk_cap <= pr_cap[c_addr]; chk_data <= c_op == 3'd5; chk_val <= c_data;
-        ack_param <= c_param;
+        ack_param <= c_param; ack_gate <= c_gate;
       end
       if (c_v && c_r && (c_op == 3'd6 || c_op == 3'd7)) kept[c_addr] = 2'd0;
     end
@@ -369,8 +372,8 @@ module cr_probe_sb #(parameter int MAX_WAIT = 200, parameter bit WAIT_IN_RESET =
     else if (c_v && c_r) mid_q <= 1'b0;
 
   task automatic report();
-    $display("probe-sb: probes offered in idle=%0d sFlush=%0d sDrain(held)=%0d sReset(held)=%0d sRelease(held)=%0d longest-wait=%0d errors=%0d",
-             n_by_phase[0], n_by_phase[1], n_by_phase[2], n_by_phase[3], n_by_phase[4], n_held_max, errors);
+    $display("probe-sb: probes offered in idle=%0d sQuiesce=%0d sDrain(held)=%0d sIso(held)=%0d sReset=%0d sRelease=%0d longest-wait=%0d errors=%0d",
+             n_by_phase[0], n_by_phase[1], n_by_phase[2], n_by_phase[3], n_by_phase[4], n_by_phase[5], n_held_max, errors);
     $display("probe-sb: ProbeAckData=%0d clean-ProbeAck-from-T=%0d; from lines kept across a reset (hot L1D): dirty=%0d clean-T=%0d B=%0d (toB %0d)",
              n_dirty_data, n_clean_ack_t, n_hot[3], n_hot[2], n_hot[1], n_hot_toB);
     $display("probe-sb: NtoN-for-lines-not-held=%0d answered-by-the-gate=%0d longest-wait-outside-reset=%0d", n_nton, n_gate_ack, n_wait_out_max);
