@@ -1387,7 +1387,9 @@ class DCacheImp(outer: DCache) extends LazyModuleImp(outer) with HasDCacheParame
       bankedDataArray.io.readline.valid := false.B
     }
     // nothing should even try to write then: the DCache is drained, channel A is closed and Probes are held
-    assert(!(io.quiesce.get.freeze && (tag_write_arb.io.out.valid || dataWriteArb.io.out.valid)),
+    // (the write valids as the control logic drives them, before the freeze clamp)
+    assert(!(io.quiesce.get.freeze && (tag_write_arb.io.out.valid || dataWriteArb.io.out.valid ||
+        mainPipe.io.meta_write.valid || mainPipe.io.error_flag_write.valid)),
       "DCache: L1D array write while XSCore is isolated")
   }
 

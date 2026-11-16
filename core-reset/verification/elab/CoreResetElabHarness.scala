@@ -1,10 +1,10 @@
 /***************************************************************************************
 * Elaboration harness for the core-only reset (verification only, not part of the patch).
 * Copy into src/main/scala/xiangshan/ and run:
-*   mill -i xiangshan.runMain xiangshan.CoreResetElab <outdir> [ctrl_keep,ctrl_sweep,gates]
+*   mill -i xiangshan.runMain xiangshan.CoreResetElab <outdir> [ctrl_full,ctrl_keep,gates]
 * Targets (each into its own directory <outdir>/<target>):
-*   ctrl_keep  : CoreResetCtrl(keepL1 = true)
-*   ctrl_sweep : CoreResetCtrl(keepL1 = false)
+*   ctrl_full  : CoreResetCtrl(keepL1 = false)  (FULL, default)
+*   ctrl_keep  : CoreResetCtrl(keepL1 = true)   (KEEP)
 *   gates      : a TL-C client -> TLQuiesceGate("l1d", early = false) -> manager,
 *                a TL-UL client -> TLQuiesceGate("l1i", early = true) -> manager,
 *                a TL-UL client -> TLResetIsolation -> manager (asynchronous reset, as in XSTile)
@@ -80,17 +80,17 @@ class CoreResetGatesHarness(implicit p: Parameters) extends LazyModule {
 
 object CoreResetElab extends App {
   val outDir = args.headOption.getOrElse("build/core_reset_elab")
-  val targets = if (args.length > 1) args(1).split(",").toSeq else Seq("ctrl_keep", "ctrl_sweep", "gates")
+  val targets = if (args.length > 1) args(1).split(",").toSeq else Seq("ctrl_full", "ctrl_keep", "gates")
   val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
     "--lowering-options=explicitBitcast,disallowLocalVariables,disallowPortDeclSharing,locationInfoStyle=none")
   // a configuration only for the Parameters the TileLink nodes need
   val (config, _, _) = top.ArgParser.parse(Array("--config", "MinimalConfig", "--num-cores", "1"))
 
   targets.foreach {
+    case "ctrl_full" =>
+      ChiselStage.emitSystemVerilogFile(new CoreResetCtrl(keepL1 = false), Array("--target-dir", s"$outDir/ctrl_full"), firtoolOpts)
     case "ctrl_keep" =>
       ChiselStage.emitSystemVerilogFile(new CoreResetCtrl(keepL1 = true), Array("--target-dir", s"$outDir/ctrl_keep"), firtoolOpts)
-    case "ctrl_sweep" =>
-      ChiselStage.emitSystemVerilogFile(new CoreResetCtrl(keepL1 = false), Array("--target-dir", s"$outDir/ctrl_sweep"), firtoolOpts)
     case "gates" =>
       val h = DisableMonitors(p => LazyModule(new CoreResetGatesHarness()(p)))(config)
       ChiselStage.emitSystemVerilogFile(h.module, Array("--target-dir", s"$outDir/gates"), firtoolOpts)

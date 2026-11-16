@@ -428,8 +428,9 @@ class XSTile()(implicit p: Parameters) extends LazyModule
         // the L2 prefetcher translates through the core's TLB: no request during the sequence (the TLB answers
         // every request within a few cycles, so none is pending at the reset point)
         when (ctl.io.busy) { core.module.io.l2_tlb_req.req.valid := false.B }
-        // isolation of the TLB port (the core is the responder): req.ready and resp.valid
-        l2top.module.io.l2_tlb_req.req.ready := isoReset(core.module.io.l2_tlb_req.req.ready, false.B)
+        // isolation of the TLB port (the core is the responder): req.ready and resp.valid; ready is masked under busy like valid,
+        // otherwise L2 would see a request fire that the core never took
+        l2top.module.io.l2_tlb_req.req.ready := isoReset(core.module.io.l2_tlb_req.req.ready, false.B) && !ctl.io.busy
         l2top.module.io.l2_tlb_req.resp.valid := isoReset(core.module.io.l2_tlb_req.resp.valid, false.B)
       }
       io.debugTopDown.robHeadPaddr.valid := isoReset(core.module.io.debugTopDown.robHeadPaddr.valid, false.B)
