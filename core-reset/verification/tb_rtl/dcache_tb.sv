@@ -88,18 +88,18 @@ module dcache_tb import dp::*; ;
 
   rtl_l2 l2m (
     .clk(clk), .rst(rst),
-    .a_valid(l2_a_valid), .a_ready(l2_a_ready), .a_opcode(l2_a_bits_opcode), .a_param(l2_a_bits_param),
-    .a_size(l2_a_bits_size), .a_source(l2_a_bits_source), .a_address(l2_a_bits_address),
-    .b_valid(l2_b_valid), .b_ready(l2_b_ready), .b_opcode(l2_b_bits_opcode), .b_param(l2_b_bits_param),
-    .b_size(l2_b_bits_size), .b_source(l2_b_bits_source), .b_address(l2_b_bits_address),
-    .b_mask(l2_b_bits_mask), .b_data(l2_b_bits_data), .b_corrupt(l2_b_bits_corrupt),
-    .c_valid(l2_c_valid), .c_ready(l2_c_ready), .c_opcode(l2_c_bits_opcode), .c_param(l2_c_bits_param),
-    .c_size(l2_c_bits_size), .c_source(l2_c_bits_source), .c_address(l2_c_bits_address),
-    .c_data(l2_c_bits_data), .c_corrupt(l2_c_bits_corrupt),
-    .d_valid(l2_d_valid), .d_ready(l2_d_ready), .d_opcode(l2_d_bits_opcode), .d_param(l2_d_bits_param),
-    .d_size(l2_d_bits_size), .d_source(l2_d_bits_source), .d_sink(l2_d_bits_sink), .d_denied(l2_d_bits_denied),
-    .d_data(l2_d_bits_data), .d_corrupt(l2_d_bits_corrupt),
-    .e_valid(l2_e_valid), .e_ready(l2_e_ready), .e_sink(l2_e_bits_sink),
+    .a_valid(l2io_0_a_valid), .a_ready(l2io_0_a_ready), .a_opcode(l2io_0_a_bits_opcode), .a_param(l2io_0_a_bits_param),
+    .a_size(l2io_0_a_bits_size), .a_source(l2io_0_a_bits_source), .a_address(l2io_0_a_bits_address),
+    .b_valid(l2io_0_b_valid), .b_ready(l2io_0_b_ready), .b_opcode(l2io_0_b_bits_opcode), .b_param(l2io_0_b_bits_param),
+    .b_size(l2io_0_b_bits_size), .b_source(l2io_0_b_bits_source), .b_address(l2io_0_b_bits_address),
+    .b_mask(l2io_0_b_bits_mask), .b_data(l2io_0_b_bits_data), .b_corrupt(l2io_0_b_bits_corrupt),
+    .c_valid(l2io_0_c_valid), .c_ready(l2io_0_c_ready), .c_opcode(l2io_0_c_bits_opcode), .c_param(l2io_0_c_bits_param),
+    .c_size(l2io_0_c_bits_size), .c_source(l2io_0_c_bits_source), .c_address(l2io_0_c_bits_address),
+    .c_data(l2io_0_c_bits_data), .c_corrupt(l2io_0_c_bits_corrupt),
+    .d_valid(l2io_0_d_valid), .d_ready(l2io_0_d_ready), .d_opcode(l2io_0_d_bits_opcode), .d_param(l2io_0_d_bits_param),
+    .d_size(l2io_0_d_bits_size), .d_source(l2io_0_d_bits_source), .d_sink(l2io_0_d_bits_sink), .d_denied(l2io_0_d_bits_denied),
+    .d_data(l2io_0_d_bits_data), .d_corrupt(l2io_0_d_bits_corrupt),
+    .e_valid(l2io_0_e_valid), .e_ready(l2io_0_e_ready), .e_sink(l2io_0_e_bits_sink),
     .grant_delay(k_grant_delay), .rel_delay(k_rel_delay), .cbo_delay(k_cbo_delay), .c_stall(k_c_stall),
     .full_mode(!IS_KEEP), .reset_point(l2_reset_point),
     .pr_req(pr_req), .pr_addr(pr_addr), .pr_cap(pr_cap), .pr_go(pr_go),
@@ -189,19 +189,19 @@ module dcache_tb import dp::*; ;
       end
       // ---- K6: nothing crosses the gate while isolated (the ProbeAck of the gate itself excepted), B and A closed when held
       if (ctl_isolate) begin
-        if (l2_a_valid && l2_a_ready) fail("K6", "A beat crossed the gate while isolated");
-        if (l2_e_valid) fail("K6", "E valid towards L2 while isolated");
-        if (l2_c_valid && !(!IS_KEEP && ctl_ack && l2_c_bits_opcode == 3'd4 && l2_c_bits_param == 3'd5))
+        if (l2io_0_a_valid && l2io_0_a_ready) fail("K6", "A beat crossed the gate while isolated");
+        if (l2io_0_e_valid) fail("K6", "E valid towards L2 while isolated");
+        if (l2io_0_c_valid && !(!IS_KEEP && ctl_ack && l2io_0_c_bits_opcode == 3'd4 && l2io_0_c_bits_param == 3'd5))
           fail("K6", $sformatf("C valid towards L2 while isolated, other than the ProbeAck NtoN of the gate (op %0d param %0d)",
-                               l2_c_bits_opcode, l2_c_bits_param));
-        if (l2_d_valid && l2_d_ready) fail("K6", "D beat taken by the core side while isolated");
+                               l2io_0_c_bits_opcode, l2io_0_c_bits_param));
+        if (l2io_0_d_valid && l2io_0_d_ready) fail("K6", "D beat taken by the core side while isolated");
         if (|probe_core_side) fail("K6", "gate offers something to the core while isolated");
       end
-      if (ctl_gate_block && l2_a_valid && l2_a_ready) fail("K6", "A beat crossed the gate after sDrain started");
+      if (ctl_gate_block && l2io_0_a_valid && l2io_0_a_ready) fail("K6", "A beat crossed the gate after sDrain started");
       // ---- K7: Probes: held while hold_probe; FULL answers in sReset / sRelease only; KEEP never answers
-      if (l2_b_valid && l2_b_ready && ctl_hold) fail("K7", "Probe passed the gate while held");
-      if (l2_b_valid && l2_b_ready && ctl_isolate && IS_KEEP) fail("K7", "KEEP: the gate took a Probe while isolated");
-      if (l2_b_valid && l2_b_ready && ctl_isolate && !IS_KEEP && !(ph == 3'd4 || ph == 3'd5))
+      if (l2io_0_b_valid && l2io_0_b_ready && ctl_hold) fail("K7", "Probe passed the gate while held");
+      if (l2io_0_b_valid && l2io_0_b_ready && ctl_isolate && IS_KEEP) fail("K7", "KEEP: the gate took a Probe while isolated");
+      if (l2io_0_b_valid && l2io_0_b_ready && ctl_isolate && !IS_KEEP && !(ph == 3'd4 || ph == 3'd5))
         fail("K7", "FULL: the gate took a Probe outside sReset / sRelease while isolated");
       if (ev_probe_done && ctl_isolate) begin
         if (IS_KEEP) fail("K7", "KEEP: a ProbeAck came while isolated (the gate must never answer)");

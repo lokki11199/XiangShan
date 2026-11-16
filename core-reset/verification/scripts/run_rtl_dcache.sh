@@ -28,7 +28,10 @@ if [ "$1" = elab ]; then
   BENCH=CoreResetDCacheHarness.scala
   cp elab/$BENCH "$ROOT/src/main/scala/xiangshan/$BENCH" || exit 2
   trap 'rm -f "$ROOT/src/main/scala/xiangshan/$BENCH"' EXIT
-  MILL_LOG=build/elab_dcache.log scripts/mill_retry.sh xiangshan.runMain xiangshan.CoreResetDCacheElab "$V/$ELAB" "$(echo $TARGETS | tr ' ' ',')" || exit 1
+  # one JVM per target: SramProto keeps a global map of SRAM definitions that cannot be reused by a second elaboration
+  for t in $TARGETS; do
+    MILL_LOG=build/elab_dcache.log scripts/mill_retry.sh xiangshan.runMain xiangshan.CoreResetDCacheElab "$V/$ELAB" "$t" || exit 1
+  done
   rm -f "$ROOT/src/main/scala/xiangshan/$BENCH"
   rc=0
   for t in $TARGETS; do
