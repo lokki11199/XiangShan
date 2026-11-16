@@ -26,7 +26,17 @@ ProbeAck NtoN L2 отдаёт их как действительные (SnpOnce,
 |---|---|---|
 | 15.11.2026 | ветка core-reset-v6 от kunminghu-v2; перенесены правила, хук (push только core-reset-v6), инфраструктура проверки и генератор PDF из v5 (без результатов) | dd11a2b |
 | 15.11.2026 | DESIGN.md v6 (архитектор Fable high) | 888acde |
-| 16.11.2026 | ревью дизайна (Fable high) и решения пользователя по Q1–Q10 — `core-reset/review/DESIGN_review_1.md` | — |
+| 16.11.2026 | ревью дизайна (Fable high) и решения пользователя по Q1–Q10 — `core-reset/review/DESIGN_review_1.md` | bd6fc67 |
+| 16.11.2026 | DESIGN.md ред. 2 | 9ce51a2 |
+| 16.11.2026 | Chisel v6 (16 файлов), компиляция без ошибок и предупреждений; ревью кода (Sonnet): 0 critical/major, 2 правки | 0af0db8, 881de97 |
+| 16.11.2026 | elaboration модулей (ctrl_full, ctrl_keep, gates) и полная XSNoCTop FULL/KEEP PASS (firtool отдельно), структурные проверки PASS | 3893825 |
+| 16.11.2026 | TESTPLAN.md (архитектор тестов Opus high) | fe1d9b6 |
+
+Решения пользователя по TESTPLAN §11 (16.11.2026): RTL-тест DCache — в `--quick` (FULL, сид 1), полный набор — в
+`--full`; эталон 7b16188 — разрешены временный git worktree в scratchpad, один прогон и удаление без отдельного
+вопроса; мутанты тайла — текстовые патчи `XSTile.sv`, SKIPPED = дыра в отчёте; `GATE_MUTANT_NO_ISO_B` — только в
+`fv_adapters`, замороженный список эквивалентных не расширять; CBO — в формальной модели, в `cr_dcache` по
+возможности.
 
 Решения пользователя 16.11.2026 (подробно — `core-reset/review/DESIGN_review_1.md`): FULL — AcquirePerm (NtoT и
 BtoT) не трогать, только описать (BtoT: потеря записи другого харта, откат v1 → v0); KEEP — meta/error/tag на
