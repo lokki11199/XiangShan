@@ -1,9 +1,9 @@
 #!/bin/bash
-# usage: scripts/mill_retry.sh <mill args...>      (env MILL_LOG=<file>: full output also goes there)
+# usage: scripts/mill_retry.sh <mill args...>      (env MILL_LOG=<file>: full output also goes there; MILL_ROOT=<tree>)
 # Runs `mill -i <args>` in the repository root and retries (up to 8 times, sleep i*10 s) only when the dependency
 # download fails: Maven Central answers HTTP 429 now and then. Any other failure ends at once. Exit code = mill's.
 # Dependencies come from the Google mirror of Maven Central unless COURSIER_REPOSITORIES is already set.
-ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+ROOT=${MILL_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}   # MILL_ROOT: another tree (worktree of the identity reference)
 cd "$ROOT" || exit 255
 export COURSIER_REPOSITORIES="${COURSIER_REPOSITORIES:-ivy2Local|https://maven-central.storage-download.googleapis.com/maven2|central}"
 TMP=$(mktemp)
