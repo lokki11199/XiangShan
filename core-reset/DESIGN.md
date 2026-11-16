@@ -5,6 +5,9 @@
 спецификации 1.9.3 (`[@раздел]`). Код v5 доступен как `git show core-reset-v5:<путь>`; там, где v6 берёт
 его без изменений, это сказано явно.
 
+Редакция 2 (16.11.2026): учтены независимое ревью и решения пользователя —
+`core-reset/review/DESIGN_review_1.md`; сводка — раздел 12.
+
 Обозначения режимов: **FULL** — `CoreResetKeepL1 = false` (по умолчанию), **KEEP** — `CoreResetKeepL1 = true`.
 
 ---
@@ -31,24 +34,26 @@
 | Параметр | Где | По умолчанию | Что строит |
 |---|---|---|---|
 | `EnableCoreReset` | `SoCParameters` (`system/SoC.scala`, после `EnablePowerDown`, стр. 144), `HasSoCParameter`; ключ YAML `EnableCoreReset` (`top/YamlParser.scala`) | `false` | `false` — RTL upstream без изменений (см. 5.0). `true` — гейты, `TLResetIsolation`, `CoreResetCtrl`, `DCacheQuiesceUnit`, порты запроса |
-| `CoreResetKeepL1` | там же; ключ YAML `CoreResetKeepL1` | **`false`** (в v5 было `true`) | `false` — FULL: массивы L1D на сбросе ядра, `ackProbe`. `true` — KEEP: meta / error / tag / data на сбросе тайла, `holdProbe`, `freeze`. Имеет смысл только с `EnableCoreReset` |
+| `CoreResetKeepL1` | там же; ключ YAML `CoreResetKeepL1` | **`false`** (в v5 было `true`) | `false` — FULL: массивы L1D на сбросе ядра, `ackProbe`. `true` — KEEP: meta / error / tag на сбросе тайла, `holdProbe`, `freeze` (запись всех массивов, чтение SRAM и meta / error). Имеет смысл только с `EnableCoreReset` |
 | `rstCycles` | аргумент `CoreResetCtrl` | 100 | минимальная длина сброса, `require(100 ≤ rstCycles < 255)` [@3.2.2] |
-| `isoCycles` | аргумент `CoreResetCtrl` | 1 | опережение изоляции, тактов; `require(1 ≤ isoCycles ≤ 16)` |
+| `isoCycles` | аргумент `CoreResetCtrl` | 1 | опережение изоляции, тактов; `require(1 ≤ isoCycles ≤ 16)`, для KEEP — `require(isoCycles ≤ 2)` (см. 4.3) |
 
-`rstCycles` и `isoCycles` в `SoCParameters` не выносятся (см. [Q3]).
+`rstCycles` и `isoCycles` в `SoCParameters` и YAML не выносятся (решение 16.11.2026).
 
-### 1.3. Имена (изменение относительно v5)
+### 1.3. Имена (изменение относительно v5; приняты 16.11.2026)
 
 Flush в v6 нет, поэтому: состояние `sFlush` → **`sQuiesce`**; `DCacheFlushUnit` → **`DCacheQuiesceUnit`**; файл
 `mainpipe/FlushUnit.scala` → **`mainpipe/QuiesceUnit.scala`**; `flushBlock` → `quiesceBlock`; порт
-`metaReset` / `l1_meta_reset` → `keepReset` / `l1_keep_reset` (теперь на нём четыре массива). Новое состояние
-**`sIso`**. Глоссарий `CLAUDE.md` дополнить: «опережение изоляции (sIso)», sQuiesce вместо sFlush (см. [Q6]).
+`metaReset` / `l1_meta_reset` → `keepReset` / `l1_keep_reset` (на нём три массива: meta, error, tag). Новое
+состояние **`sIso`**. Глоссарий `CLAUDE.md` дополнить: «опережение изоляции (sIso)», sQuiesce вместо sFlush.
 
 ---
 
 ## 2. Контроллер `CoreResetCtrl`
 
-Модуль в домене такта и сброса тайла. `class CoreResetCtrl(keepL1: Boolean, rstCycles: Int = 100, isoCycles: Int = 1)`.
+Модуль в домене такта и сброса тайла. `class CoreResetCtrl(keepL1: Boolean, rstCycles: Int = 100, isoCycles: Int = 1)`;
+`require(rstCycles >= 100 && rstCycles < 255)`, `require(isoCycles >= 1 && isoCycles <= 16)`,
+`require(!keepL1 || isoCycles <= 2)`.
 
 ### 2.1. Состояния и переходы
 
@@ -153,11 +158,15 @@ req               -       -      -       -        0        -        -       -
   прошло `rstCycles`.
 - **`hartInReset` = `busy`** — с первого такта последовательности, а не с sReset. В окне sQuiesce / sDrain
   отладчик больше не видит «харт не в сбросе». Для Debug Module rocket-chip это даёт: `haveResetBitRegs`
-  взводится сразу (`Debug.scala:1009–1011`), `haltedBitRegs` и `resumeReqRegs` чистятся (`:1312–1334`),
-  halt-on-reset держит debug-прерывание до выхода (`:958`). Харт при этом ещё несколько тактов работает —
-  наружу это не выходит: A некогерентных закрыт, store в DCache не идут.
-- **`inReset`** подключён: новый выход тайла `core_in_reset` (регистр `coreReset`). Кластеру он нужен, чтобы
-  отличить «опустошение» от «ядро в сбросе» (сторожевой таймер, смена `reset_vector`). См. [Q4].
+  взводится сразу (`Debug.scala:1009–1011`), `haltedBitRegs` и `resumeReqRegs` чистятся (`:1317–1326`),
+  halt-on-reset держит debug-прерывание до выхода (`:954–960`); ревью подтвердило корректность. Харт при
+  этом ещё несколько тактов работает — наружу это не выходит: A некогерентных закрыт, store в DCache не идут.
+- **`inReset`** подключён: новый выход тайла `core_in_reset` = «сброс XSCore **установлен**» (регистр
+  `coreReset`, только sReset). Он падает в начале sRelease, а ядро выходит из сброса ещё ~20 тактов (цепочка
+  ResetGen) — «ядро работает» означает только `busy` = 0. Кластеру сигнал нужен, чтобы отличить
+  «опустошение» от «сброс установлен» (сторожевой таймер). Правило для `reset_vector` — в 8.1.
+- **Иголка на запросе.** Запрос не отменяется, поэтому иголка на асинхронном входе запускает полный сброс:
+  входы запроса подаются только с выходов триггеров (8.1).
 - **`busy` без провала.** Переход sRelease → sQuiesce при `req = 1` — напрямую, `busy` и `hartInReset`
   остаются 1; в v5 между двумя последовательностями подряд `busy` падал на такт.
 - Таймаута в контроллере нет (см. 8.1).
@@ -289,32 +298,35 @@ class DCacheQuiesceUnit(implicit p: Parameters) extends DCacheModule {
 
 ### 4.3. KEEP: что переходит в домен сброса тайла
 
-Массив на сбросе тайла — это `<array>.reset := io.keepReset.get` в `DCacheImp` (как в v5 для meta / error /
-tag). Сигнал `keepReset` строится в XSTile отдельным `ResetGen` от базового сброса тайла (без `coreReset`).
+Решение 16.11.2026: на сбросе тайла — **meta, error, tag** (как в v5 после a43a292); `bankedDataArray`
+остаётся на сбросе ядра. Массив на сбросе тайла — это `<array>.reset := io.keepReset.get` в `DCacheImp`.
+Сигнал `keepReset` строится в XSTile отдельным `ResetGen` от базового сброса тайла (без `coreReset`).
 
 | Состояние DCache | Реализация | KEEP | Почему |
 |---|---|---|---|
-| `metaArray` (`L1CohMetaArray`) | триггеры `RegInit`, 2 бита на путь (`AsynchronousMetaArray.scala:67–71`) | **сброс тайла** + freeze записи | состояние когерентности — это и есть «L1D держит строку» |
-| `errorArray` (`L1ErrorMetaArray`) | триггеры `RegInit` (`AsynchronousMetaArray.scala:204–208`) | **сброс тайла** + freeze записи | флаги denied / corrupt принадлежат сохранённым строкам |
-| `tagArray` (`DuplicatedTagArray`) | SRAM `shouldReset = false`; `TagSRAMBank.rst_cnt` — `RegInit`, после сброса пишет нули во все наборы (`TagArray.scala:66–75`) | **сброс тайла** + freeze записи и чтения | иначе сброс ядра стирает теги при сохранённой meta (критическая находка ревью v5, a43a292) |
-| `bankedDataArray` (`BankedDataArray` / `SramedDataArray`) | SRAM `shouldReset = false`; ступень записи `wen_reg` содержит `RegNext(io.write.valid, false.B)` (`BankedDataArray.scala:942`) | **сброс тайла** + freeze записи и чтения (**новое в v6**) | данные сохраняются сами; но разрешение записи SRAM должно формироваться триггерами, которые сброс ядра не трогает и вход которых зажат freeze (правило R5, раздел 6.3) |
+| `metaArray` (`L1CohMetaArray`) | триггеры `RegInit`, 2 бита на путь (`AsynchronousMetaArray.scala:67–71`) | **сброс тайла**; freeze записи и `read.valid` | состояние когерентности — это и есть «L1D держит строку» |
+| `errorArray` (`L1ErrorMetaArray`) | триггеры `RegInit` (`AsynchronousMetaArray.scala:204–208`) | **сброс тайла**; freeze записи и `read.valid` | флаги denied / corrupt принадлежат сохранённым строкам |
+| `tagArray` (`DuplicatedTagArray`) | SRAM `shouldReset = false`; `TagSRAMBank.rst_cnt` — `RegInit`, после сброса пишет нули во все наборы (`TagArray.scala:66–75`) | **сброс тайла**; freeze записи и чтения | иначе сброс ядра стирает теги при сохранённой meta (критическая находка ревью v5, a43a292) |
+| `bankedDataArray` (`BankedDataArray`; с WPU — `SramedDataArray`) | SRAM `shouldReset = false`; ступень записи `wen_reg` (`BankedDataArray.scala:940–945`) | сброс ядра (как upstream); freeze записи и чтения | SRAM сброса не имеет и данные хранит сама. Перенос модуля на сброс тайла не нужен и создал бы пересечения `rst_core` → `rst_tile` без квалификатора (регистры адресов чтения и конфликтов банков, MBIST — находка 3 ревью). Защиту содержимого даёт зажим разрешений на границе модуля |
 | `prefetchArray`, `accessArray` | триггеры | сброс ядра | подсказки предвыборки; после сброса «не предвыбрано / не использовано», на корректность не влияют |
 | `replacer` (`DCacheWrapper.scala:1675`) | регистры политики | сброс ядра | выбор жертвы; вытеснение действительной строки идёт через Release независимо от истории |
-| WPU (`dwpuParam.enWPU`) | предсказатель пути | сброс ядра | предсказание проверяется тегом |
+| WPU (`dwpuParam.enWPU`, по умолчанию `false`, `Parameters.scala:261`) | предсказатель пути | сброс ядра | предсказание проверяется тегом |
 | резервирование LR/SC (MainPipe) | регистры | сброс ядра | после сброса резервирования нет — так и должно быть |
 | MissQueue, WritebackQueue, ProbeQueue, MainPipe, `l1d_to_l2_buffer` | регистры | сброс ядра | пусты в точке сброса (флаги пустоты, `quiet` гейта) |
 | `bloomFilter`, `counterFilter`, мониторы предвыборки, `CtrlUnit` | регистры | сброс ядра | статистика и регистры инъекции ошибок |
 | sbuffer | регистры | сброс ядра | закоммиченные, но не записанные в DCache store теряются, как при любом сбросе; L2 их не видела |
 
-Freeze (`io.quiesce.freeze`, KEEP, регистр `isolate` домена тайла), всё в `DCacheImp` и только при
+Freeze (`io.quiesce.freeze`, KEEP, регистр `isolate` домена тайла) — всё в `DCacheImp` и только при
 `io.keepReset.isDefined`:
 
 ```scala
 io.keepReset.foreach { r =>
-  metaArray.reset := r; errorArray.reset := r; tagArray.reset := r; bankedDataArray.reset := r
+  metaArray.reset := r; errorArray.reset := r; tagArray.reset := r
   when (io.quiesce.get.freeze) {
     metaArray.io.write.foreach(_.valid := false.B)
+    metaArray.io.read.foreach(_.valid := false.B)
     errorArray.io.write.foreach(_.valid := false.B)
+    errorArray.io.read.foreach(_.valid := false.B)
     tagArray.io.write.valid := false.B
     tagArray.io.read.foreach(_.valid := false.B)
     bankedDataArray.io.write.valid := false.B
@@ -325,18 +337,38 @@ io.keepReset.foreach { r =>
 }
 ```
 
-Блок ставится **после** всех `<>`-соединений этих портов (последнее из них — `DCacheWrapper.scala:1333`),
-иначе его перекроют.
+Блок ставится **после** всех `<>`-соединений этих портов — после цикла `DCacheWrapper.scala:1332–1340`
+(последнее соединение `bankedDataArray.io.read(i)`), иначе его перекроют.
 
-Почему зажимается и чтение (в v5 — только запись). SRAM тегов и данных однопортовые (`singlePort = true`),
-их CE = `ren || wen`. Чтение формируют LoadPipe — они работают до самого сброса и опустошением не
-останавливаются. При асинхронной установке сброса `ren` и адрес меняются в произвольный момент такта; для
-SRAM, содержимое которой обязано пережить сброс, это нарушение setup / hold на CE и адресе; типовые модели
-компилируемой SRAM при таком нарушении портят содержимое. Это инженерное допущение о библиотеке памяти, в
-RTL-симуляции эффекта нет (см. [Q2]). Зажим `read.valid` регистром домена тайла за `isoCycles` тактов до
-сброса держит CE = 0. Чтения meta / error — триггерные массивы, им зажим чтения не нужен. В такте(ах) sIso
-load получает устаревшие данные; наружу это не выходит (A закрыт, выходы ядра изолированы), а ядро через
-такт сбрасывается.
+Что даёт каждый зажим:
+
+- **Запись** meta / error / tag — вход ступени записи (`s0_way_wen`, `AsynchronousMetaArray.scala:109–122`;
+  `wen` SRAM тегов, `TagArray.scala:81`) не зависит от логики ядра.
+- **Запись данных.** Зажат вход ступени (`io.write.valid`, `io.write_dup(i).valid`); сами триггеры ступени
+  (`write_valid_dup_reg`, `RegNext(io.write.valid, false.B)`, `BankedDataArray.scala:697–701, 942`) остаются в
+  домене ядра. Они равны 0 с такта решения (MainPipe пуст) и получают 0 весь sIso; асинхронный сброс ставит
+  их в 0 — значение не меняется, WE SRAM статичен. Это пересечение без квалификатора после триггера,
+  оформляется исключением R6 (а).
+- **Чтение SRAM тегов и данных.** SRAM однопортовые (`singlePort = true`), CE = `ren || wen`. Чтение формируют
+  LoadPipe — они работают до самого сброса. При асинхронной установке сброса `ren` и адрес меняются в
+  произвольный момент такта; для SRAM, содержимое которой обязано пережить сброс, это нарушение setup / hold
+  на CE и адресе (типовые модели компилируемой SRAM при этом портят содержимое; допущение о библиотеке
+  памяти, в RTL-симуляции эффекта нет). Зажим `read.valid` / `readline.valid` на границе модуля держит
+  CE = 0 за `isoCycles` тактов до сброса.
+- **`read.valid` meta / error.** Регистры ответа — без сброса, внутри модулей `rst_tile`
+  (`RegEnable(…, read.valid)`, `AsynchronousMetaArray.scala:97–101`); при зажатом `read.valid` они не
+  захватывают индекс из логики ядра, и в модули на сбросе тайла не остаётся путей без квалификатора.
+
+`SramedDataArray` (ветка `dwpuParam.enWPU`) проверен: разрешения чтения банков строятся из тех же
+`io.read(i).valid` и `io.readline.valid` (`BankedDataArray.scala:516–533`), ступень записи — из тех же
+`io.write.valid` / `io.write_dup(i).valid` (`:391–397, 602–608`); зажимы на границе действуют так же, отдельной
+логики не нужно.
+
+Ограничение `isoCycles ≤ 2` для KEEP (находка 5 ревью). В sIso чтение SRAM зажато, а LoadPipe ещё работают:
+запрос s0 остаётся без ответа, s1 сравнивает теги по выходу SRAM, который модель не обязана держать
+(`holdRead = false`). При `isoCycles` = 1 и 2 такой s1 либо уже в сбросе, либо его assert
+(`LoadPipe.scala:277`, `RegNext`) оценивается в сбросе; при `isoCycles ≥ 3` он сработал бы в живом ядре.
+Наружу результаты таких load не выходят в любом случае (A закрыт, выходы ядра изолированы).
 
 Assert-ы в `DCacheImp` (из v5, условие — наличие блока):
 
@@ -364,8 +396,8 @@ assert(!(io.quiesce.get.done && wb.io.req.fire && wb.io.req.bits.voluntary),
 - новые модули — `Option.when(...)(Module(...))`;
 - изменённые соединения — `opt.foreach { x => when (x) { ... } }` поверх исходного соединения, исходная
   строка не трогается;
-- в diplomacy — `TLTempNode()` вместо гейта (эфемерный узел, проводов и модулей не создаёт; upstream сам
-  использует его в `L2Top.scala:88–91`);
+- в diplomacy — без `TLTempNode()` (решение 16.11.2026): `if (EnableCoreReset) a := gate := b else a := b`,
+  где ветвь `else` — исходная строка upstream дословно; так же для `TLResetIsolation` и мостов предвыборки;
 - в `HasDCacheParameters` (`DCacheWrapper.scala:90`) добавить
   `def coreResetEnabled = p(SoCParamsKey).EnableCoreReset` и
   `def coreResetKeepL1 = coreResetEnabled && p(SoCParamsKey).CoreResetKeepL1` — ими пользуются все модули и
@@ -373,7 +405,7 @@ assert(!(io.quiesce.get.done && wb.io.req.fire && wb.io.req.bits.voluntary),
   `val EnableCoreReset` / `CoreResetKeepL1` из `HasSoCParameter`: `HasDCacheParameters` подмешан во многие
   классы вне DCache (PTW, LSQ, триггеры CSR), совпадение имён `val` и `def` в двух trait дало бы конфликт.
 
-Проверка идентичности — раздел 9.
+Проверка идентичности — сравнение полного XSNoCTop с эталоном 7b16188 (раздел 9).
 
 ### 5.1. `system/SoC.scala`
 
@@ -384,8 +416,8 @@ assert(!(io.quiesce.get.done && wb.io.req.fire && wb.io.req.bits.voluntary),
   EnableCoreReset: Boolean = false,
   // false: L1D is reset with the core and is empty afterwards (dirty lines are lost); a Probe offered while
   //        the core is in reset is answered by the gate in front of L1D (ProbeAck NtoN)
-  // true : L1D keeps its lines: meta, error flags, tags and data are in the tile reset domain and are not
-  //        accessed while the core is isolated; a Probe offered meanwhile waits in L2
+  // true : L1D keeps its lines: meta, error flags and tags are in the tile reset domain; they and the data
+  //        SRAMs are not accessed while the core is isolated; a Probe offered meanwhile waits in L2
   CoreResetKeepL1: Boolean = false
 ```
 
@@ -464,7 +496,8 @@ assert(!(io.quiesce.get.done && wb.io.req.fire && wb.io.req.bits.voluntary),
    - после стр. 1586: `mainPipe.io.store_req.valid := false.B; io.lsu.store.req.ready := false.B`;
    - после стр. 1592: `mainPipe.io.atomic_req.valid := false.B; io.lsu.atomics.req.ready := false.B`.
    Load-ы по попаданию не блокируются; Probe обслуживаются.
-6. KEEP: блок `io.keepReset.foreach { ... }` раздела 4.3 — после стр. 1333 (после всех соединений массивов).
+6. KEEP: блок `io.keepReset.foreach { ... }` раздела 4.3 — после стр. 1340 (после цикла 1332–1340, то есть
+   после всех соединений массивов).
 7. Assert-ы раздела 4.3: первый — внутри `io.keepReset.foreach`, второй — внутри `io.quiesce.foreach`
    (после `wb.io.req <> mainPipe.io.wb`, стр. 1612).
 
@@ -492,8 +525,8 @@ assert(!(io.quiesce.get.done && wb.io.req.fire && wb.io.req.bits.voluntary),
 
 После стр. 635: `dcache.io.quiesce.foreach(_ <> io.l1_quiesce.get)`,
 `dcache.io.keepReset.foreach(_ := io.l1_keep_reset.get)`. `MemBlockImp.io` — `cloneType` внутреннего, сам
-подхватит. Дерево сброса (стр. 2100–2127) не меняется: `dcache` остаётся в `rightResetTree`, а четыре массива
-получают `keepReset` уже внутри `DCacheImp`.
+подхватит. Дерево сброса (стр. 2100–2127) не меняется: `dcache` остаётся в `rightResetTree`, а три массива
+(meta, error, tag) получают `keepReset` уже внутри `DCacheImp`.
 
 ### 5.11. `xiangshan/XSCore.scala`
 
@@ -514,26 +547,44 @@ gateBlock, holdProbe, ackProbe, isolate, earlyQuiet, gatesQuiet, coreReset`) и 
 Основа — v5 (`git show core-reset-v5:src/main/scala/xiangshan/XSTile.scala`); ниже — полный перечень с
 отличиями v6 (помечены **v6**).
 
-Diplomacy (`XSTile`):
+Diplomacy (`XSTile`). `TLTempNode()` из v5 не используется: каждое соединение — `if / else`, ветвь `else` —
+строка upstream без изменений.
 
-- `coreGates`, `coreGate(name, early)`, `coreIsolations`, `coreIsolation()` — как в v5 (`TLTempNode()` без
-  `EnableCoreReset`).
-- Гейты: `l1d` (`early = false`) между `l1d_logger` и `memBlock.dcache_port` (стр. 66); `l1i` (`early = true`,
-  стр. 70); `ptw` (`early = true`) между `l2top.inner.ptw_to_l2_buffer.node` и `memBlock.ptw_to_l2_buffer.node`
-  (стр. 72); `i_mmio` (`early = true`) между `i_mmio_buffer.node` и `instr_uncache_node` (стр. 95); `d_mmio`
-  (`early = true`, стр. 99); `coreIsolation()` на `icachectrl` (стр. 97).
-- Мосты предвыборки L1 → L2 и L1 → L3 при `EnableCoreReset` разрезаны на `BundleBridgeSink` +
-  `BundleBridgeSource` (`l2_pf_iso`, `l3_pf_iso`), как в v5.
+```scala
+val coreGates = scala.collection.mutable.ListBuffer[TLQuiesceGate]()
+private def coreGate(name: String, early: Boolean) = {      // called only with EnableCoreReset
+  val g = LazyModule(new TLQuiesceGate(name, early)); coreGates += g; g.node
+}
+val coreIsolations = scala.collection.mutable.ListBuffer[TLResetIsolation]()
+private def coreIsolation() = { val i = LazyModule(new TLResetIsolation); coreIsolations += i; i.node }
+
+coreParams.dcacheParametersOpt.map { _ =>
+  if (EnableCoreReset) {
+    l2top.inner.misc_l2_pmu := l2top.inner.l1d_logger := coreGate("l1d", early = false) := memBlock.dcache_port :=
+      memBlock.l1d_to_l2_buffer.node := memBlock.dcache.clientNode
+  } else {
+    l2top.inner.misc_l2_pmu := l2top.inner.l1d_logger := memBlock.dcache_port :=
+      memBlock.l1d_to_l2_buffer.node := memBlock.dcache.clientNode
+  }
+}
+```
+
+- Так же, по одному `if / else`: `l1i` (`early = true`, стр. 70 — гейт между `l1i_logger` и `icache_node`); `ptw`
+  (`early = true`, стр. 72 — между `l2top.inner.ptw_to_l2_buffer.node` и `memBlock.ptw_to_l2_buffer.node`);
+  `i_mmio` (`early = true`, стр. 95 — между `i_mmio_buffer.node` и `instr_uncache_node`); `d_mmio`
+  (`early = true`, стр. 99); `coreIsolation()` на `icachectrl` (стр. 97, внутри `if (soc.EnableICacheCtrl)`).
+- Мосты предвыборки L1 → L2 и L1 → L3: при `EnableCoreReset` разрезаны на `BundleBridgeSink` +
+  `BundleBridgeSource` (`l2_pf_iso`, `l3_pf_iso`), как в v5; без него — исходные строки (стр. 47, 76–83).
 
 `XSTileImp.io` — новые порты (`Option.when(EnableCoreReset)`):
 
 | Порт | Напр. | Смысл |
 |---|---|---|
-| `debug_reset` | in | уровень, асинхронный: `ndmreset` Debug Module |
+| `debug_reset` | in | уровень, асинхронный, с выхода триггера: `ndmreset` Debug Module |
 | `hart_reset` | in | **v6**: уровень, асинхронный: `hartreset` этого харта (в v5 складывался с `debug_reset` до синхронизатора) |
 | `core_reset_req` | in | уровень, асинхронный: контроллер сброса кластера |
 | `core_reset_busy` | out | домен такта тайла: последовательность идёт (регистр `busy`) |
-| `core_in_reset` | out | **v6**: домен такта тайла: сброс XSCore установлен (регистр `coreReset`) |
+| `core_in_reset` | out | **v6**: домен такта тайла: сброс XSCore **установлен** (регистр `coreReset`, только sReset); не «ядро в сбросе» — см. 2.4 |
 
 Контроллер (`XSTileImp`):
 
@@ -583,7 +634,7 @@ coreResetCtrl match {
   такта последовательности (находка (a)); `l2_pf_en` — `isoHold`.
 - `pfCtrlFromCore`: `isoHold(core.module.io.l2PfCtrl)`, затем
   `when (ctl.io.busy) { l2top.module.io.pfCtrlFromCore.l2_pf_master_en := false.B }` — предвыборки L2 на время
-  последовательности выключены (находка (a), [Q7]).
+  последовательности выключены в обоих режимах (находка (a); решение 16.11.2026).
 - `l2_pmp_resp`: при `iso` — «запрет» (все поля `PMPRespBundle` в 1). CoupledL2 читает `pmp_resp` на такт
   позже `resp.valid` (`BestOffsetPrefetch.scala:515–530`): ответ, прошедший в последнем такте sDrain, в такте
   sIso отбрасывается как исключение, а не принимается с нулевым PMP (находка (f)).
@@ -661,7 +712,7 @@ XSTop создаёт `XSTile` напрямую (`Top.scala:105`), без XSTileW
 |---|---|---|
 | `cpu_halt` | L2Top `RegNext` → порт; `l2.io_cpu_halt` (`L2Top.scala:276`, `:372`); XSNoCTop `isWFI` | `isoReset(_, false.B)` |
 | `cpu_critical_error` | L2Top `RegNext` → порт | `isoReset(_, false.B)` |
-| `msiAck`, `teemsiAck` | IMSIC (уровневое рукопожатие; по v5 мост ждёт фронт ack) | `isoReset(_, false.B)` — не hold |
+| `msiAck`, `teemsiAck` | IMSIC, четырёхфазное рукопожатие (`ChiselAIA/…/IMSIC.scala:184–192, 771–797`) | `isoReset(_, false.B)`; hold дал бы зависание моста |
 | `resetInFrontend` | L2Top `hartIsInReset` (`:314–316`); `CoreResetCtrl.coreInReset` | в L2Top — `isoReset(_, true.B)`; в контроллере — квалификатор `releasing` |
 | `traceCoreInterface.toEncoder.groups(i).valid` | L2Top `RegNext`, `RegEnable` (`:286–306`) | `isoReset(_, false.B)` |
 | `...groups(i).bits.iretire`, `.itype` | L2Top `RegNext` без valid | `isoReset(_, 0.U)` (**v6**) |
@@ -702,16 +753,26 @@ XSTop создаёт `XSTile` напрямую (`Top.scala:105`), без XSTileW
   раздела 2.5, формальное свойство).
 - **R4. Снятие.** `isolate` падает не раньше чем через полный такт после того, как `alive` = 1 и
   `resetInFrontend` = 0; оба меняются синхронно (снятие сброса синхронизовано ResetGen).
-- **R5. KEEP, память.** Массивы meta / error / tag / data — модули на `rst_tile`. Их входы разрешения (запись —
-  все четыре; чтение — SRAM тегов и данных) зажаты `freeze` на границе модуля; адрес и данные квалифицированы
-  разрешением (CE = 0 ⇒ SRAM не обращается; при `EnableClockGate` её такт загейчен). Триггеры без сброса внутри
-  массивов (`s1_way_wen`, `write_valid_dup_reg`, регистры чтения) имеют зажатый D-вход либо питают только
-  логику `rst_core`.
-- **R6. Исключения (waiver).** (а) чтение meta / error и ответы чтения всех массивов возвращаются в логику
-  `rst_core`, которая в это время в сбросе; (б) в FULL массивы остаются на `rst_core`, R5 не применяется;
-  (в) OR на пути сброса `coreBaseReset || coreReset`: в работе `coreReset` меняется, только когда
-  `coreBaseReset` = 0; при установке сброса тайла оба меняются асинхронно, иголка на OR безвредна — `ResetGen`
-  снимает сброс только после трёх фронтов.
+- **R5. KEEP, память.** Модули meta / error / tag — на `rst_tile`; `bankedDataArray` — на `rst_core`. Все входы
+  разрешения зажаты `freeze` на границе модулей: запись — всех четырёх массивов, чтение — SRAM тегов и
+  данных, `read.valid` — meta и error. Адрес и данные квалифицированы разрешением (CE = 0 ⇒ SRAM не
+  обращается; при `EnableClockGate` её такт загейчен).
+- **R6. Оставшиеся пересечения (исключения, перечень полный).**
+  - (а) **WE SRAM данных**: `wen_reg` (`BankedDataArray.scala:940–945`; `SramedDataArray` — `:602–608`) — функция
+    триггеров домена ядра (`RegNext(io.write.valid, false.B)` на `rst_core`, `write_valid_dup_reg`,
+    `write_bank_mask_reg`, `write_div_addr_dup_reg` без сброса). Квалификатор стоит до триггера, а не после.
+    Обоснование: D-входы зажаты `freeze` с sIso, значение 0 с такта решения, асинхронный сброс значение не
+    меняет — сигнал статичен. Подтверждается assert-ом «нет записи при freeze» и формальным свойством.
+  - (б) **Адрес и данные SRAM** тегов и данных — комбинационно от триггеров ядра; квалифицированы CE / WE = 0.
+  - (в) **Выходы массивов** (ответы чтения meta / error / tag / data) идут в логику `rst_core`, которая в это
+    время в сбросе; в домен тайла не возвращаются.
+  - (г) **Регистры MBIST-цепочки массива тегов** (`MbistPipeline` в `DuplicatedTagArray`, `TagArray.scala:128`) —
+    на `rst_tile` (как в v5); их входы — DFT-сигналы тайла, не логика ядра. Режим MBIST — только при общем
+    сбросе.
+  - (д) В FULL массивы остаются на `rst_core`, R5 не применяется.
+  - (е) OR на пути сброса `coreBaseReset || coreReset`: в работе `coreReset` меняется, только когда
+    `coreBaseReset` = 0; при установке сброса тайла оба меняются асинхронно, иголка на OR безвредна — `ResetGen`
+    снимает сброс только после трёх фронтов.
 - **Вход в ядро.** Сигналы тайл → ядро не изолируются: приёмник в сбросе, а при снятии сброса они синхронны.
 
 ---
@@ -750,17 +811,30 @@ XSTop создаёт `XSTile` напрямую (`Top.scala:105`), без XSTileW
    NtoN MSHR снимает бит клиента и переводит TRUNK → TIP (`tl2chi/MSHR.scala:1098–1112`) и продолжает со
    своей копией из DataStorage / releaseBuf; повторный Acquire сброшенной L1D обслуживается как попадание
    (анализ старого патча, §1.3.2–1.3.3, та же ревизия CoupledL2).
-3. **AcquirePerm: L2 выдаёт чужие данные.** DCache на промах store, перезаписывающего всю строку, шлёт
-   `AcquirePerm` (`MainPipe.scala:850` — `full_overwrite`; `MissQueue.scala:845`, `:265`). При промахе в L2
-   CoupledL2 посылает `MakeUnique` (`tl2chi/MSHR.scala:390`) и DataStorage **не пишет** (`:492` —
-   `mp_release.dsWen := !req_acquirePerm`; `:804` — `mp_grant.dsWen` только при `gotGrantData`): в выбранном
-   пути остаются данные вытесненной строки, директория — TRUNK, клиент = 1, `dirty` = 0. Спецификация требует
-   от менеджера помнить «data not valid» до ReleaseData / ProbeAckData [@9.3.2]; CoupledL2 помнит это неявно
-   — «строка в TRUNK у клиента». После сброса L1D и `ProbeAck NtoN` строка становится TIP с содержимым
-   **другой** строки, и L2 выдаёт его как действительное: в ответ на SnpOnce, через DCT (Snp\*Fwd, данные из
-   releaseBuf), при повторном Acquire, на Get от ICache / PTW. Это не «старое значение», а чужие данные (и
-   канал утечки между адресами). Окно: от Grant на AcquirePerm до первого ReleaseData / ProbeAckData этой
-   строки. Смягчения — раздел 10 (В1, В2), вопрос [Q1].
+3. **AcquirePerm (NtoT и BtoT).** DCache на промах store, перезаписывающего всю строку, шлёт `AcquirePerm`
+   вместо `AcquireBlock` (`MainPipe.scala:850` — `full_overwrite`; `MissQueue.scala:845`, `:265`). CoupledL2 в
+   обоих случаях посылает `MakeUnique` (`tl2chi/MSHR.scala:380–381`, `:390`) — владение без данных. По `Comp`
+   `gotDirty := false` (`:1206–1214`), строка записывается в директорию как TRUNK, клиент = 1, `dirty` = 0
+   (`:776–777`). Спецификация требует от менеджера помнить «data not valid» до ReleaseData / ProbeAckData
+   [@9.3.2]; CoupledL2 помнит это неявно — «строка в TRUNK у клиента». Сброс L1D и `ProbeAck NtoN` ломают это
+   допущение: строка становится TIP clean без клиента (`:1098–1112`). Два случая:
+   - **NtoT, промах в L2 — чужие данные.** DataStorage при `MakeUnique` не пишется (`:492` —
+     `mp_release.dsWen := !req_acquirePerm`; `:804` — `mp_grant.dsWen` только при `gotGrantData`): в выбранном
+     пути остаются данные вытесненной строки. После NtoN L2 выдаёт их как действительные: в ответ на SnpOnce,
+     через DCT (Snp\*Fwd, данные из releaseBuf), при повторном Acquire, на Get от ICache / PTW. Это не
+     «старое значение», а содержимое **другой** строки (и канал утечки между адресами).
+   - **BtoT, попадание в BRANCH — потеря записи другого харта.** При попадании в BRANCH с `needT` CoupledL2
+     идёт в HN (`tl2chi/MainPipe.scala:236` — `acquire_on_hit_s3`) тем же `MakeUnique`. Сценарий: харт X
+     записал строку A (у X — UD, в памяти v0); наше ядро её прочитало (X → SD, у нас SC со значением v1);
+     store на всю строку → `AcquirePerm BtoT` → `MakeUnique`; HN аннулирует копию X без записи в память
+     (по CHI — SnpMakeInvalid; поведение HN кластера требует проверки). L1D пишет v2. Сброс ядра, NtoN: L2
+     держит v1 как TIP **clean**; вытеснение чистой строки идёт без WriteBack (`tl2chi/MSHR.scala:357` —
+     `isWriteBackFull` требует `meta.dirty`). Пока строка в L2, читатели видят v1; после вытеснения — v0 из
+     памяти. Пропадает не только наша запись v2, но и **закоммиченная запись другого харта** v1, причём
+     немонотонно (v1 → v0).
+
+   Окно в обоих случаях: от Grant на AcquirePerm до первого ReleaseData / ProbeAckData этой строки. Решение
+   пользователя 16.11.2026: **не исправлять, описать** (здесь и в PDF). Вариант исправления — В1 (раздел 10).
 4. **Probe в sDrain / sIso держится, а не отвечается.** Нарушением не является (правило 3.i), длительность —
    единицы тактов.
 
@@ -777,19 +851,27 @@ XSTop создаёт `XSTile` напрямую (`Top.scala:105`), без XSTileW
 - **Протокол запроса.** Уровень; держать до `core_reset_busy` = 1 (если `busy` не используется — не меньше
   16 тактов тайла: синхронизатор 3 такта, с `WFIClockGate` ещё пробуждение такта). Запрос не отменяется.
   Сброс длится, пока запрос высокий, но не меньше `rstCycles`; ядро стартует после снятия запроса, когда
-  `busy` упадёт. `reset_vector` менять при `core_in_reset` = 1.
+  `busy` упадёт.
+- **Входы запроса — только с выходов триггеров** (находка 12 ревью). `debug_reset`, `hartResetReq`,
+  `core_reset_req` асинхронны к такту тайла, но не должны иметь иголок: запрос не отменяется, и иголка,
+  пойманная синхронизатором, запускает полный сброс ядра. Комбинационная логика перед входом запрещена.
+- **`reset_vector`.** Менять, пока запрос высокий; значение должно быть стабильным **от снятия запроса до
+  `busy` = 0**. `core_in_reset` означает только «сброс установлен» и падает в начале sRelease, а ядро
+  выходит из сброса ещё ~20 тактов; к тому же вектор доходит до ядра через `DelayN(5)` (`L2Top.scala:255, 266`).
 - **CDC запроса** (находка (c)): у каждого источника свой синхронизатор, ИЛИ — после. Синхронизаторы тайла
   стоят на (возможно остановленном) такте тайла; XSNoCTop будит такт своими синхронизаторами на свободном
   такте. Короткий запрос при остановленном такте теряется — отсюда требование «держать до `busy`». Интегратор,
   ставящий XSTile / XSTileWrap без XSNoCTop, обязан сам разбудить такт по запросу и держать его до конца
   последовательности (в FULL гейт отвечает на Probe в сбросе).
 - **Питание.** Запрос во время последовательности выключения (`lpState` ≠ sIDLE, `XSNoCTop.scala:109–130`)
-  не поддержан: `l2_flush_en` и `cpu_halt` при изоляции зажаты в 0.
+  не поддержан: `l2_flush_en` и `cpu_halt` при изоляции зажаты в 0, а у `lpStateNext` нет перехода назад в
+  sIDLE (`utils/LowPowerState.scala:44–51`) — автомат питания остаётся в промежуточном состоянии,
+  восстановление — только сбросом тайла. Кластер не должен запрашивать сброс ядра после `l2_flush_en`.
 - **MMIO.** Запросы некогерентных агентов, не прошедшие гейт до начала последовательности, теряются со
   сбросом, включая закоммиченный MMIO store в ожидании гейта. Начатые — завершаются (`earlyQuiet`).
 - **Зависшее устройство.** MMIO-запрос без ответа держит `earlyQuiet` = 0 — сброс не начнётся.
-- **MSI.** `msiAck` при изоляции = 0 (не hold — решение v5). Поведение IMSIC-моста, если сброс ядра попал
-  между `vld_req` и `vld_ack`, по коду не проверялось — проверить при интеграции.
+- **MSI.** Рукопожатие с IMSIC четырёхфазное; `msiAck` = 0 при изоляции безопасен. MSI, принятые ядром до
+  сброса, теряются вместе с interrupt file ядра (он сбрасывается).
 - **XSTop** (TileLink L3) — порты привязаны к нулю, сброс только ядра не выведен (5.16).
 - **Новая логика в DCache.** Любая новая очередь или конвейер, способные держать транзакцию, требуют флага
   пустоты в `DCacheQuiesceUnit`.
@@ -823,10 +905,18 @@ Probe к L1D, предложенный в sDrain … sRelease, ждёт в Sourc
 сброса (жертва выбирается при заполнении); очередь `pftQueue` допускает несколько запросов после маски.
 Сигнала «L2 без предвыборок в полёте» у CoupledL2 нет; без её изменения окно не закрыть.
 
-**Требование к кластеру для KEEP:** сторожевой таймер на длительность сброса (`core_in_reset`); снятие
-запроса не должно зависеть от транзакции, которой нужен снуп к этому RN (запись отладчика через SBA при
-удержанном `ndmreset` — взаимная блокировка); удержание заведомо короче 28000 тактов, если симуляция идёт с
-assert-ами CoupledL2. Для отладки через SBA при удержанном сбросе — FULL.
+**Последовательности подряд** (находка 4 ревью; решение 16.11.2026 — только описать). Если запрос поднят
+снова до конца sRelease, контроллер идёт sRelease → sQuiesce напрямую. B при этом открыт только на время
+sQuiesce — 3–5 тактов, если DCache и некогерентные агенты пусты. Удержанные Probe успевают дойти до DCache
+(и должны получить ответ до выхода из sDrain), но новые Probe и стоящий RXSNP переходят во второй сброс:
+для L2 и HN два сброса подряд выглядят как одно удержание суммарной длины. Сторожевой таймер кластера должен
+считать от первого запроса; между запросами полезна пауза, достаточная для разбора очереди снупов.
+
+**Требование к кластеру для KEEP:** сторожевой таймер на длительность сброса (`core_reset_busy`,
+`core_in_reset`); снятие запроса не должно зависеть от транзакции, которой нужен снуп к этому RN (запись
+отладчика через SBA при удержанном `ndmreset` — взаимная блокировка); удержание заведомо короче 28000 тактов,
+если симуляция идёт с assert-ами CoupledL2. Для отладки через SBA при удержанном сбросе — FULL. Таймаута и
+удержания вне сброса (В4, В8) в базовом варианте нет (решение 16.11.2026).
 
 ### 8.3. FULL
 
@@ -850,26 +940,35 @@ assert-ами CoupledL2. Для отладки через SBA при удерж�
   | снятие изоляции после выхода ядра | `isolate` ↓ только при `alive && !feReset` тактом раньше | `ISO_EARLY_DROP` (v5) |
   | `l1.req` в sIso | store не входит в MainPipe в sIso | `NO_REQ_IN_ISO` |
   | FULL: ответ гейта только в sReset / sRelease | Probe в sDrain / sIso держится | `ACK_IN_ISO` |
-  | KEEP: freeze с sIso | нет записи и чтения SRAM при `freeze` | `LATE_FREEZE` |
+  | KEEP: freeze с sIso | нет записи массивов, чтения SRAM и `read.valid` meta / error при `freeze` | `LATE_FREEZE`, `NO_READ_FREEZE` |
   | `hartInReset` с первого такта | P: `hartInReset === busy` | `LATE_HART_IN_RESET` |
-  | `busy` без провала | последовательности подряд | — (cover) |
+  | `busy` без провала; KEEP: Probe между сбросами подряд | последовательности подряд (sRelease → sQuiesce) | — (cover) |
   | маска предвыборки с `busy` | `addr_valid` = 0, `l2_pf_master_en` = 0 при `busy` | `PF_MASK_LATE` |
 
   Мутанты v5 `NO_EARLY_BLOCK`, `NO_EARLY_QUIET`, `LATE_HOLDB`, `STALE_QUIET`, `NO_MP_WAIT`, `NO_WBQ_WAIT`,
   `NO_DRAIN`, `NO_FE_WAIT`, `RESET_EARLY` сохраняются; мутанты обхода — удалить.
-- **Идентичность при `EnableCoreReset = false`**: стенд elaboration собирает `DCacheWrapper` и стенд гейтов
-  на 7b16188 и на v6 с выключенным параметром; SystemVerilog сравнивается побайтно (кроме комментариев с
-  номерами строк). Полный XSNoCTop — в `--full` (см. [Q9]).
+- **Опустошение на RTL настоящей DCache** (находка 2 ревью; обязательное требование к архитектуре тестов).
+  В v5 флаги пустоты и блокировки проверялись только на модели `cr_dcache`. В v6 — прогон RTL
+  `DCacheWrapper` + `TLQuiesceGate` (l1d) + `CoreResetCtrl` с моделью L2, в обоих режимах, с направленными
+  случаями: запрос приходит при **промахе AMO** (в том числе LR / SC и AMOCAS в MainPipe и MissQueue), при
+  **CBO** в `cmo_unit`, при **запросе WFI** с неотправленным Acquire, при **Probe в последнем такте
+  sQuiesce** и в первом такте sDrain. Проверяется: `done` и `idle` не поднимаются раньше конца транзакции,
+  после `done` не стартует Release, в точке сброса нет открытых транзакций по счётчикам гейта.
+- **Идентичность при `EnableCoreReset = false`** (находка 7 ревью). Обязательная проверка в `--full`: полный
+  XSNoCTop с `EnableCoreReset = false` на v6 сравнивается с XSNoCTop на 7b16188 (те же YAML и аргументы).
+  Эталон 7b16188 генерируется один раз; в ветке хранится его хеш (по файлам SystemVerilog, после удаления
+  комментариев с путями и номерами строк), а не сам RTL. В `--quick` — то же сравнение на стенде модулей
+  (`DCacheWrapper`, стенд гейтов): быстрый сигнал, идентичности XSTile / XSTileWrap / XSNoCTop он не доказывает.
 - KEEP и SRAM: в модели SRAM DCache — проверка «нет обращения при `freeze`» и «содержимое до и после сброса
-  совпадает».
+  совпадает»; прогон с `isoCycles` = 1 и 2.
 
 ---
 
-## 10. Варианты (не входят в базовый дизайн)
+## 10. Варианты (не входят в базовый дизайн; решения 16.11.2026 — не включать)
 
 | № | Вариант | Что закрывает | Цена |
 |---|---|---|---|
-| В1 | FULL: не слать `AcquirePerm` при NtoT — `Mux(full_overwrite && !noPerm, acquirePerm, acquireBlock)` в `MissQueue.scala:265` и `:845`, `noPerm = EnableCoreReset && !CoreResetKeepL1` (BtoT оставить: у L2 данные есть) | 7.2 п. 3: в L2 всегда действительные (старые) данные строк L1D; остаётся только «потеря грязных данных» | вместо MakeUnique — ReadUnique с данными на каждый промах полной перезаписи (memset / memcpy); две строки в DCache, CoupledL2 не меняется |
+| В1 | FULL: не слать `AcquirePerm` вообще (NtoT и BtoT) — `Mux(full_overwrite && !noPerm, acquirePerm, acquireBlock)` в `MissQueue.scala:265` и `:845`, `noPerm = EnableCoreReset && !CoreResetKeepL1`. **Не включён** (решение 16.11.2026), остаётся вариантом | 7.2 п. 3, оба случая: CoupledL2 вместо MakeUnique шлёт ReadUnique (`tl2chi/MSHR.scala:377–391`) и получает данные с передачей грязной копии (обработка PassDirty по коду не сверялась); после NtoN в L2 действительное прежнее значение (v1), грязная строка вытесняется с WriteBack. Остаётся только потеря собственных записей ядра | ReadUnique с данными на каждый промах полной перезаписи (memset / memcpy); две строки в DCache, CoupledL2 не меняется |
 | В2 | CoupledL2: бит «данные недействительны» в директории после MakeUnique; по NtoN такая строка → INVALID | 7.2 п. 3 без потери производительности | изменение CoupledL2 (чужой код) |
 | В3 | Обход (sweep) v5 | 7.2 п. 1–3 | снят решением пользователя |
 | В4 | KEEP + удержание вне сброса (sHold старого патча): ядро вне сброса, стоит, DCache отвечает на Probe; после снятия запроса — второй короткий сброс | 8.2: Probe ждёт не дольше `rstCycles` + выход | возврат импульсного механизма, убранного в v5 |
@@ -877,7 +976,7 @@ assert-ами CoupledL2. Для отладки через SBA при удерж�
 | В6 | «Липкий» захват запроса на свободном такте в XSNoCTop | короткий запрос при остановленном такте | логика вне тайла; интегратору без XSNoCTop не помогает |
 | В7 | Отмена запроса до sIso (возврат в sIdle при `!req`) | (b), если нужна отмена | отладчик, снявший `ndmreset` рано, не получит сброса |
 | В8 | Таймаут опустошения с выходом ошибки | 8.1, зависшая L2 / устройство | что делать по таймауту — решает кластер; сбрасывать ядро с открытыми транзакциями нельзя |
-| В9 | `isoCycles`, `rstCycles` в `SoCParameters` / YAML | настройка без правки кода | два параметра |
+| В9 | `isoCycles`, `rstCycles` в `SoCParameters` / YAML | настройка без правки кода | два параметра; отклонён (в YAML не выносить) |
 
 ---
 
@@ -888,37 +987,31 @@ assert-ами CoupledL2. Для отладки через SBA при удерж�
 | (a) major, KEEP: удержанный Probe останавливает все снупы | маска подсказок и `l2_pf_master_en` с `busy`; остаток — ограничение и требование сторожевого таймера (8.2); В4, В5 — варианты |
 | (b) запрос фиксируется; `hartInReset` поздно | фиксация оставлена как семантика запроса сброса; `hartInReset` = `busy` с первого такта (2.4) |
 | (c) ИЛИ до синхронизатора; синхронизатор на остановленном такте | по синхронизатору на источник (XSTile, XSNoCTop), отдельный порт `hart_reset`; протокол «держать до `busy`» (8.1); В6 — вариант |
-| (d) без `EnableCoreReset` RTL не идентичен upstream | `Option` / `if`: структурная идентичность (5.0), проверка сравнением RTL (9) |
+| (d) без `EnableCoreReset` RTL не идентичен upstream | `Option` / `if`, без `TLTempNode`: структурная идентичность (5.0); проверка — сравнение полного XSNoCTop с эталоном 7b16188 (9) |
 | (e) `inReset` не подключён; провал `busy` | выход тайла `core_in_reset`; прямой переход sRelease → sQuiesce (2.4) |
 | (f) `l2_pmp_resp`, `l2_pf_en`, `iretire` / `itype` не изолированы; нет лицензии | зажимы в таблице 6.2; заголовок Mulan PSL v2 в двух новых файлах |
 | ревью v5: запись в массивы на фронте `coreReset` (нулевой запас) | запас `isoCycles` тактов (2.3) |
-| ревью v5: теги на сбросе ядра в KEEP | `tagArray` на сбросе тайла, как в a43a292; в v6 туда же `bankedDataArray` и зажим чтения SRAM (4.3) |
+| ревью v5: теги на сбросе ядра в KEEP | `tagArray` на сбросе тайла, как в a43a292; в v6 добавлен зажим чтения SRAM тегов и данных и `read.valid` meta / error (4.3); `bankedDataArray` остаётся на сбросе ядра |
 
 ---
 
-## 12. Открытые вопросы
+## 12. Решения 16.11.2026
 
-- **[Q1]** FULL: включить ли В1 (без `AcquirePerm` при NtoT) в базовый вариант? Без него L2 после сброса
-  может выдать данные чужой строки (7.2 п. 3); с ним — только старое значение той же строки, ценой
-  ReadUnique вместо MakeUnique на полной перезаписи.
-- **[Q2]** KEEP: подтвердить два добавления к v5 — `bankedDataArray` на сбросе тайла и зажим разрешения
-  **чтения** SRAM тегов и данных по `freeze` (4.3). Основание — целостность SRAM при асинхронном сбросе
-  источника CE / адреса; в симуляции эффекта не видно.
-- **[Q3]** `isoCycles` = 1 по умолчанию (минимум по требованию). Нужен ли больший запас по умолчанию и нужны
-  ли `isoCycles` / `rstCycles` в YAML (В9)?
-- **[Q4]** Порты: новый выход `core_in_reset` и отдельный вход `hart_reset` у XSTile (у XSTileWrap / XSNoCTop —
-  `hartResetReq` upstream). Подходит ли набор `debug_reset`, `core_reset_req`, `core_reset_busy`,
-  `core_in_reset` кластеру?
-- **[Q5]** `hartIsInReset` = 1 с первого такта последовательности (харт ещё работает несколько тактов).
-  Подходит ли это отладчику пользователя, или нужен отдельный сигнал «unavailable»?
-- **[Q6]** Переименования `sFlush` → `sQuiesce`, `DCacheFlushUnit` → `DCacheQuiesceUnit`, `FlushUnit.scala` →
-  `QuiesceUnit.scala`, `metaReset` → `keepReset` — принять? (Требование «в v6 нет реализации flush» я
-  понял и как отсутствие имени.)
-- **[Q7]** `l2_pf_master_en` = 0 на время последовательности — в обоих режимах (базовый вариант) или только
-  в KEEP?
-- **[Q8]** KEEP: достаточно ли требования сторожевого таймера на кластере, или нужен В4 (удержание вне
-  сброса) / В8 (таймаут в контроллере)?
-- **[Q9]** Проверку идентичности RTL при `EnableCoreReset = false` включить в `check.sh --quick` (стенд
-  модулей) и `--full` (XSNoCTop)?
-- **[Q10]** Запрос сброса ядра во время последовательности выключения питания и при остановленном такте без
-  XSNoCTop — оставить ограничением (8.1)?
+Открытых вопросов нет. Ревью дизайна и решения пользователя — `core-reset/review/DESIGN_review_1.md`.
+
+| Вопрос / находка ревью | Решение | Где в документе |
+|---|---|---|
+| Q1, находка 1: AcquirePerm в FULL | В1 не включать; описать оба случая — NtoT (чужие данные) и BtoT (потеря записи другого харта, v1 → v0) | 7.2 п. 3, 10 |
+| Q2, находка 3: KEEP и массив данных | на сбросе тайла только meta / error / tag; freeze зажимает запись всех массивов, чтение SRAM тегов и данных и `read.valid` meta / error; `bankedDataArray` — на сбросе ядра | 4.3, 5.8, 6.3 (R5, R6) |
+| Q3, находка 5: `isoCycles` | 1 по умолчанию; для KEEP `require(isoCycles ≤ 2)`; в YAML не выносить | 1.2, 2, 4.3 |
+| Q4, находка 6: порты | набор принят; `core_in_reset` = «сброс установлен»; `reset_vector` стабилен от снятия запроса до `busy` = 0 | 2.4, 5.13, 8.1 |
+| Q5, находка 9: `hartInReset = busy` | принято | 2.4 |
+| Q6: переименования | приняты | 1.3 |
+| Q7: `l2_pf_master_en` = 0 при `busy` | в обоих режимах | 5.13, 8.2 |
+| Q8, находка 4: KEEP, удержание Probe | сторожевой таймер на кластере; окно Probe между сбросами подряд — только описать | 8.2 |
+| Q9, находка 7: идентичность RTL | без `TLTempNode`; полный XSNoCTop против эталона 7b16188 (хеш) в `--full`, стенд модулей в `--quick` | 5.0, 5.13, 9 |
+| Q10, находка 11: питание | ограничение; восстановление — только сбросом тайла | 8.1 |
+| находка 2: опустошение настоящей DCache | RTL-тест `DCacheWrapper` + гейт (AMO-промах, CBO, WFI, Probe в последнем такте sQuiesce) | 9 |
+| находка 8: MSI | оговорка снята: рукопожатие четырёхфазное, MSI до сброса теряются с interrupt file | 6.2, 8.1 |
+| находка 10: место блока freeze | после стр. 1340 | 4.3, 5.8 |
+| находка 12: иголка на запросе | входы запроса — только с выходов триггеров | 2.4, 8.1 |
