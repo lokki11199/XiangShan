@@ -298,13 +298,11 @@ class CoreResetDCacheHarness(keep: Boolean)(implicit p: Parameters) extends Lazy
   }
 }
 
-object CoreResetDCacheElab extends App {
-  val outDir = args.headOption.getOrElse("build/core_reset_elab")
-  val targets = if (args.length > 1) args(1).split(",").toSeq else Seq("full", "keep")
-  val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
+object CoreResetDCacheElab {
+  private val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
     "--lowering-options=explicitBitcast,disallowLocalVariables,disallowPortDeclSharing,locationInfoStyle=none")
 
-  /** One configuration into <outDir>/<dir>; also usable as the elab target dcache_full / dcache_keep. */
+  /** One configuration into <dir>; also the elab targets dcache_full / dcache_keep of CoreResetElab. */
   def emit(dir: String, keep: Boolean): Unit = {
     // as `make verilog` for XSNoCTop: no --remove-assert (the asserts of the DCache and the gate are the test)
     val (config0, _, _) = top.ArgParser.parse(Array("--config", "XSNoCTopConfig", "--fpga-platform", "--dfx", "false"))
@@ -320,9 +318,13 @@ object CoreResetDCacheElab extends App {
     ChiselStage.emitSystemVerilogFile(h.module, Array("--target-dir", dir), firtoolOpts)
   }
 
-  targets.foreach {
-    case "full" => emit(s"$outDir/dcache_full", keep = false)
-    case "keep" => emit(s"$outDir/dcache_keep", keep = true)
-    case t => println(s"CoreResetDCacheElab: unknown target $t")
+  def main(args: Array[String]): Unit = {
+    val outDir = args.headOption.getOrElse("build/core_reset_elab")
+    val targets = if (args.length > 1) args(1).split(",").toSeq else Seq("full", "keep")
+    targets.foreach {
+      case "full" => emit(s"$outDir/dcache_full", keep = false)
+      case "keep" => emit(s"$outDir/dcache_keep", keep = true)
+      case t => println(s"CoreResetDCacheElab: unknown target $t")
+    }
   }
 }

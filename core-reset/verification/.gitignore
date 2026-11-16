@@ -9,3 +9,6 @@ formal/*.sby
 *.before
 *.resume
 ALLDONE
+
+# generated probes of the RTL test of the DCache
+tb_rtl/gen/

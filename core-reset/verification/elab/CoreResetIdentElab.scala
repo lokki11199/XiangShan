@@ -69,9 +69,8 @@ class CoreResetIdentDCache(implicit p: Parameters) extends LazyModule {
   }
 }
 
-object CoreResetIdentElab extends App {
-  val outDir = args.headOption.getOrElse("build/core_reset_elab")
-  val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
+object CoreResetIdentElab {
+  private val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
     "--lowering-options=explicitBitcast,disallowLocalVariables,disallowPortDeclSharing,locationInfoStyle=none")
 
   /** Also usable as the elab target ident_dcache (dir = <outdir>/ident_dcache). */
@@ -86,5 +85,8 @@ object CoreResetIdentElab extends App {
     ChiselStage.emitSystemVerilogFile(h.module, Array("--target-dir", dir), firtoolOpts)
   }
 
-  emit(s"$outDir/ident_dcache")
+  def main(args: Array[String]): Unit = {
+    val outDir = args.headOption.getOrElse("build/core_reset_elab")
+    emit(s"$outDir/ident_dcache")
+  }
 }
