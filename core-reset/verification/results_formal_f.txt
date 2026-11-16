@@ -19,3 +19,23 @@ CTRL_MUTANT_ISO_EARLY_DROP       bmc : FAIL at cycle 22  P16_isolation_covers_re
 CTRL_MUTANT_NO_ISO_LEAD          bmc : FAIL at cycle 4  P21_iso_lead 
 CTRL_MUTANT_NO_REQ_IN_ISO        bmc : FAIL at cycle 4  P23_l1_req_through_iso 
 CTRL_MUTANT_LATE_HART_IN_RESET   bmc : FAIL at cycle 2  P11_hart_in_reset_is_busy 
+CTRL_MUTANT_BUSY_GAP             bmc 60 clean or >300s, (pdr): FAIL at cycle 27  P25_busy_falls_only_from_release P25_no_busy_gap 
+CTRL_MUTANT_IN_RESET_WIDE        bmc : FAIL at cycle 22  P6_reset_only_in_reset 
+GATE_MUTANT_ALWAYS_QUIET         bmc : FAIL at cycle 2  P5_quiet_is_sound 
+GATE_MUTANT_CUT_A                bmc : FAIL at cycle 2  P4_a_message_not_cut 
+GATE_MUTANT_NO_ISO_C             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ISO_D             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ISO_E             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+ISO_MUTANT_NO_ISO                bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ACKB              bmc : FAIL at cycle 5  P8N_taken_at_once 
+GATE_MUTANT_ACK_PARAM            bmc : FAIL at cycle 6  P12_ack_is_NtoN 
+CTRL_MUTANT_NOKEEP_HOLDB         bmc : FAIL at cycle 5  P8N_held_only_in_drain_iso 
+CTRL_MUTANT_ACK_IN_ISO           bmc : FAIL at cycle 4  P12_take_only_in_reset P8N_held_only_in_drain_iso 
+GATE_MUTANT_NO_ISO_A             prove: PASS (equivalent mutant, expected PASS)
+ISO_MUTANT_ALWAYS_QUIET          prove: PASS (equivalent mutant, expected PASS)
+=== configuration f2: FULL iso2 (-D ISO2)
+design prove rstCycles=16 isoCycles=2 (abc pdr, unbounded): PASS  (13.03 sec)
+design      cover (as assert, abc pdr; step = length of the trace found by pdr, not necessarily the shortest): PASS (1 reached: C14 step 6,)
+CTRL_MUTANT_ISO_SHORT            bmc : FAIL at cycle 5  P21_iso_lead 
+CTRL_MUTANT_NO_ISO_LEAD          bmc : FAIL at cycle 4  P21_iso_lead 
+formal: 0 unexpected result(s)
