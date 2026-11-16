@@ -24,7 +24,14 @@ ProbeAck NtoN L2 отдаёт их как действительные (SnpOnce,
 
 | Дата | Что | Коммит |
 |---|---|---|
-| 15.11.2026 | ветка core-reset-v6 от kunminghu-v2; перенесены правила, хук (push только core-reset-v6), инфраструктура проверки и генератор PDF из v5 (без результатов) | — |
+| 15.11.2026 | ветка core-reset-v6 от kunminghu-v2; перенесены правила, хук (push только core-reset-v6), инфраструктура проверки и генератор PDF из v5 (без результатов) | dd11a2b |
+| 15.11.2026 | DESIGN.md v6 (архитектор Fable high) | 888acde |
+| 16.11.2026 | ревью дизайна (Fable high) и решения пользователя по Q1–Q10 — `core-reset/review/DESIGN_review_1.md` | — |
+
+Решения пользователя 16.11.2026 (подробно — `core-reset/review/DESIGN_review_1.md`): FULL — AcquirePerm (NtoT и
+BtoT) не трогать, только описать (BtoT: потеря записи другого харта, откат v1 → v0); KEEP — meta/error/tag на
+сбросе тайла, freeze зажимает запись и чтение SRAM тегов/данных и чтение meta/error, `bankedDataArray` НЕ
+переносить; окно Probe между сбросами подряд в KEEP — только описать; остальные рекомендации ревью приняты.
 
 Окружение (облачная сессия, 4 CPU, 15 ГБ ОЗУ, ~30 ГБ диска):
 - mill 0.12.3: `/opt/mill/mill-0.12.3.jar` (Maven Central, sha1 сверен), ссылка `/usr/local/bin/mill`. Установка всех инструментов — `core-reset/setup_env.sh` (setup script окружения; холодный прогон ~16 мин);
