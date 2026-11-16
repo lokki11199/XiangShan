@@ -141,7 +141,14 @@ case class SoCParameters
   // when UsePrivateClint is false, mtip is from soc.
   UsePrivateClint: Boolean = false,
   WFIClockGate: Boolean = false,
-  EnablePowerDown: Boolean = false
+  EnablePowerDown: Boolean = false,
+  // Reset of XSCore (core + L1) alone, L2 and the CHI port keep running (see xiangshan/CoreReset.scala)
+  EnableCoreReset: Boolean = false,
+  // false: L1D is reset with the core and is empty afterwards (dirty lines are lost); a Probe offered while
+  //        the core is in reset is answered by the gate in front of L1D (ProbeAck NtoN)
+  // true : L1D keeps its lines: meta, error flags and tags are in the tile reset domain; they and the data
+  //        SRAMs are not accessed while the core is isolated; a Probe offered meanwhile waits in L2
+  CoreResetKeepL1: Boolean = false
 ){
   require(
     !IMSICParams.HasTEEIMSIC || (IMSICParams.HasTEEIMSIC && IMSICBusType == device.IMSICBusType.AXI),
@@ -216,6 +223,8 @@ trait HasSoCParameter {
 
   val WFIClockGate = soc.WFIClockGate
   val EnablePowerDown = soc.EnablePowerDown
+  val EnableCoreReset = soc.EnableCoreReset
+  val CoreResetKeepL1 = soc.CoreResetKeepL1
 
   def HasMEMencryption = cvm.HasMEMencryption
   require((cvm.HasMEMencryption && (cvm.KeyIDBits > 0)) || (!cvm.HasMEMencryption),

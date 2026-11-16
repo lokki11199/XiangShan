@@ -136,6 +136,8 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
     // atmoics
     val atomic_req = Flipped(DecoupledIO(new MainPipeReq))
     val atomic_resp = ValidIO(new MainPipeResp)
+    // a request (of any kind) is in s1, s2 or s3 (DCacheQuiesceUnit)
+    val busy = Option.when(coreResetEnabled)(Output(Bool()))
     // find matched refill data in missentry
     val mainpipe_info = Output(new MainPipeInfoToMQ)
     // missqueue refill data
@@ -902,6 +904,8 @@ class MainPipe(implicit p: Parameters) extends DCacheModule with HasPerfEvents w
 
   // io.replace_resp.valid := s3_fire && s3_req.replace
   // io.replace_resp.bits := s3_req.miss_id
+
+  io.busy.foreach(_ := s1_valid || s2_valid || s3_valid)
 
   io.meta_write.valid := s3_fire && update_meta
   io.meta_write.bits.idx := s3_idx

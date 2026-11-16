@@ -101,12 +101,30 @@ class XSTileWrap()(implicit p: Parameters) extends LazyModule
       val dft_reset = Option.when(hasMbist)(Input(new DFTResetSignals()))
       val l2_flush_en = Option.when(EnablePowerDown) (Output(Bool()))
       val l2_flush_done = Option.when(EnablePowerDown) (Output(Bool()))
+      // reset of XSCore (core + L1) alone, L2 and CHI keep running (EnableCoreReset, see CoreReset.scala):
+      //   debug_reset     - level, asynchronous: Debug Module ndmreset; the hartreset of this hart is
+      //                     hartResetReq, which with EnableCoreReset resets XSCore only, not the tile
+      //   core_reset_req  - level, asynchronous: reset controller of the cluster
+      //   core_reset_busy - tile clock domain: the sequence is running, from its first cycle to its last
+      //   core_in_reset   - tile clock domain: the reset of XSCore is asserted
+      // Requests come from flip-flop outputs and are held until core_reset_busy is high (a request is never
+      // cancelled). XSCore is held in reset while a request is high, at least 100 cycles.
+      val debug_reset = Option.when(EnableCoreReset) (Input(Bool()))
+      val core_reset_req = Option.when(EnableCoreReset) (Input(Bool()))
+      val core_reset_busy = Option.when(EnableCoreReset) (Output(Bool()))
+      val core_in_reset = Option.when(EnableCoreReset) (Output(Bool()))
       val pwrdown_req_n = Option.when(EnablePowerDown) (Input (Bool()))
       val pwrdown_ack_n = Option.when(EnablePowerDown) (Output (Bool()))
       val iso_en = Option.when(EnablePowerDown) (Input (Bool()))
     })
 
-    val reset_sync = withClockAndReset(clock, (reset.asBool || io.hartResetReq).asAsyncReset)(ResetGen(io.dft_reset))
+    // with EnableCoreReset hartResetReq resets only XSCore (a reset of the whole tile in the middle of CHI
+    // traffic breaks the CHI link, see CoreReset.scala)
+    val reset_sync = if (EnableCoreReset) {
+      withClockAndReset(clock, reset.asBool.asAsyncReset)(ResetGen(io.dft_reset))
+    } else {
+      withClockAndReset(clock, (reset.asBool || io.hartResetReq).asAsyncReset)(ResetGen(io.dft_reset))
+    }
     val noc_reset_sync = EnableCHIAsyncBridge.map(_ => withClockAndReset(clock, noc_reset.get)(ResetGen(io.dft_reset)))
     val soc_reset_sync = withClockAndReset(clock, soc_reset)(ResetGen(io.dft_reset))
 
@@ -165,6 +183,12 @@ class XSTileWrap()(implicit p: Parameters) extends LazyModule
     tile.module.io.nodeID.foreach(_ := io.nodeID.get)
     io.l2_flush_en.foreach { _ := tile.module.io.l2_flush_en.getOrElse(false.B) }
     io.l2_flush_done.foreach { _ := tile.module.io.l2_flush_done.getOrElse(false.B) }
+    // core-only reset requests: synchronised in XSTile, one synchroniser per source
+    tile.module.io.debug_reset.foreach(_ := io.debug_reset.get)
+    tile.module.io.hart_reset.foreach(_ := io.hartResetReq)
+    tile.module.io.core_reset_req.foreach(_ := io.core_reset_req.get)
+    io.core_reset_busy.foreach(_ := tile.module.io.core_reset_busy.get)
+    io.core_in_reset.foreach(_ := tile.module.io.core_in_reset.get)
     io.pwrdown_ack_n.foreach { _ := DontCare }
     io.pwrdown_ack_n zip io.pwrdown_req_n foreach { case (ack, req) =>
       val powerSwitchBuffer = Module(new PowerSwitchBuffer)
