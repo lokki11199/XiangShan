@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: scripts/run.sh SCEN SEED [DEFINE[+DEFINE...]] [extra plusargs]
-#   configuration: "" (KEEP) or CFG_SWEEP; mutants and options are defines joined with "+"
+#   configuration: "" (FULL, the default), CFG_KEEP, ISO2 or CFG_KEEP+ISO2; mutants and options are defines joined with "+"
+#   (e.g. CFG_KEEP+CTRL_MUTANT_LATE_FREEZE)
 #   TRACE_BUILD=1 scripts/run.sh 6 1 "" +VCD +VCD_TO=50000   -> build/wave.vcd
 # The Verilator build of one configuration (build/obj_<defines>) is made once and redone in place when a source
 # file is newer than the binary; never build the same

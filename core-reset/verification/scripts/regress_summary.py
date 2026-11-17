@@ -15,9 +15,9 @@ reproduced = lambda l: ('ERROR' in l or '%Error' in l or 'TIMEOUT' in l or 'prob
 passed = lambda l: 'RESULT: PASS' in l and 'ERROR' not in l and '%Error' not in l and 'TIMEOUT' not in l
 cfg = lambda l: l.split()[0][4:]
 print('design runs: %d, PASS %d' % (len(good), sum(passed(l) for l in good)))
-for c in ['KEEP', 'CFG_SWEEP']:
+for c in ['FULL', 'CFG_KEEP', 'ISO2', 'CFG_KEEP+ISO2']:
     f = lambda L: [l for l in L if cfg(l) == c]
-    print('  %-10s design %3d PASS %3d | naive %2d reproduced %2d | mutant runs %3d caught %3d | +EQUIV %2d PASS %2d' % (
+    print('  %-14s design %3d PASS %3d | naive %2d reproduced %2d | mutant runs %3d caught %3d | +EQUIV %2d PASS %2d' % (
         c, len(f(good)), sum(passed(l) for l in f(good)), len(f(naive)), sum(reproduced(l) for l in f(naive)),
         len(f(mut)), sum(caught(l) for l in f(mut)), len(f(equiv)), sum(passed(l) for l in f(equiv))))
 print('naive reset: %d, problem reproduced %d' % (len(naive), sum(reproduced(l) for l in naive)))

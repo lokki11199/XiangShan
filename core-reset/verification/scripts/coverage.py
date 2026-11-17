@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Adds up the coverage lines of results_soak_<cfg>.log (cr_txmon, cr_probe_sb, drain, triggers, directed Probes)."""
+"""Adds up the coverage lines of results_soak_<cfg>.log (v6: cr_txmon, cr_probe_sb, drain, iso, b2b, req-drop, full,
+triggers C1..C15, directed Probes of nine cases). Prints JSON (keys of TESTPLAN 4.6)."""
 import re, sys, json
 log = sys.argv[1] if len(sys.argv) > 1 else 'results_soak.log'
 tot = {}
@@ -10,17 +11,16 @@ for line in open(log):
     if line.startswith('###'): runs += 1; continue
     if line.startswith('final:'):
         for k in ['resets', 'reset-points', 'dcache-ops', 'ul-ops', 'icachectrl-ops', 'probes', 'spurious-probes',
-                  'snoops-served-by-L2-alone', 'acquire-perm', 'releases-during-quiesce', 'lines-kept', 'probes-held',
+                  'snoops-served-by-L2-alone', 'acquire-perm', 'lines-kept', 'probes-held',
                   'probes-answered-by-gate', 'errors']:
             m = re.search(r'\b' + k + r'=(\d+)', line); add('final.' + k, m.group(1))
-        m = re.search(r'releases-during-quiesce=\d+ \(with data (\d+)\)', line); add('final.releases-with-data', m.group(1))
     elif line.startswith('txmon-open-at-start:'):
         for c, v in re.findall(r'C(\d+)=(\d+)', line): add('open_at_start.C' + c, v)
     elif line.startswith('txmon-pre-completed:'):
         for k, v in re.findall(r'(\w+)=(\d+)', line): add('pre_done.' + k, v)
-    elif line.startswith('txmon-started-in-sFlush:'):
+    elif line.startswith('txmon-started-in-sQuiesce:'):
         a, b = line.split('in-sDrain:')
-        for k, v in re.findall(r'(\w+)=(\d+)', a): add('started_sFlush.' + k, v)
+        for k, v in re.findall(r'(\w+)=(\d+)', a): add('started_sQuiesce.' + k, v)
         for k, v in re.findall(r'(\w+)=(\d+)', b): add('started_sDrain.' + k, v)
     elif line.startswith('txmon:'):
         m = re.search(r'max-pre-latency=(\d+)', line); tot['max_pre_latency'] = max(tot.get('max_pre_latency', 0), int(m.group(1)))
@@ -37,6 +37,9 @@ for line in open(log):
     elif line.startswith('probe-sb: ProbeAckData'):
         m = re.search(r'ProbeAckData=(\d+) clean-ProbeAck-from-T=(\d+).*dirty=(\d+) clean-T=(\d+) B=(\d+) \(toB (\d+)\)', line)
         for k, v in zip(['ProbeAckData', 'clean_from_T', 'hot_dirty', 'hot_cleanT', 'hot_B', 'hot_toB'], m.groups()): add('probe.' + k, v)
+    elif line.startswith(('iso:', 'b2b:', 'req-drop:', 'full:')):
+        pre = line.split(':')[0].replace('-', '_')
+        for k, v in re.findall(r'([\w-]+)=(\d+)', line): add(pre + '.' + k.replace('-', '_'), v)
     elif line.startswith('triggers hit:'):
         for c, v in re.findall(r'C(\d+)=(\d+)', line): add('trig_hit.C' + c, v)
     elif line.startswith('triggers missed:'):
@@ -45,15 +48,13 @@ for line in open(log):
         for k, v in re.findall(r'([\w-]+)=(\d+)', line):
             if k == 'longest-sDrain': tot['drain.' + k] = max(tot.get('drain.' + k, 0), int(v))
             else: add('drain.' + k, v)
-    elif line.startswith('directed: start-of-sFlush'):
-        m = re.search(r'offered-in-sFlush=(\d+) later=(\d+)', line); add('dir.flush_start.offered', m.group(1)); add('dir.flush_start.later', m.group(2))
-    elif line.startswith('directed: first-cycle-of-sDrain'):
-        m = re.search(r'offered-in-sDrain=(\d+) transition-later=(\d+)', line); add('dir.drain_first_cycle.offered', m.group(1)); add('dir.drain_first_cycle.later', m.group(2))
-    elif line.startswith('directed: last-cycle-of-sFlush'):
-        m = re.search(r'offered-in-sFlush=(\d+) later=(\d+)', line); add('dir.flush_last_cycle.offered', m.group(1)); add('dir.flush_last_cycle.later', m.group(2))
-    elif line.startswith('directed:'):
-        m = re.search(r'stale before the Probe=(\d+), skipped=(\d+), swept-lines-probed=(\d+) \(of them dirty before the sweep (\d+)\)', line)
-        add('dir.dirty_l2_stale', m.group(1)); add('dir.skipped', m.group(2)); add('dir.swept_probed', m.group(3)); add('dir.swept_dirty', m.group(4))
+    elif line.startswith('directed: dirty lines'):          # before the general 'directed:' line
+        m = re.search(r'stale before the Probe=(\d+), skipped=(\d+), lost-lines-answered-by-the-gate=(\d+) \(of them dirty (\d+)\)', line)
+        add('dir.dirty_l2_stale', m.group(1)); add('dir.skipped', m.group(2)); add('dir.lost_by_gate', m.group(3)); add('dir.lost_dirty_by_gate', m.group(4))
+    elif line.startswith('directed: '):                      # the six trigger cases: <name> offered-in-<phase>=N later|transition-later=N
+        m = re.match(r'directed: (\S+) offered-in-(\w+)=(\d+) (?:transition-)?later=(\d+)', line)
+        n = m.group(1).replace('-', '_')
+        add('dir.' + n + '.offered', m.group(3)); add('dir.' + n + '.later', m.group(4))
     elif line.startswith('debug-hold:'):
         m = re.search(r'holds=(\d+) snoops-during-hold=(\d+) \(dirty (\d+)\) longest-snoop-to-ProbeAck=(\d+) served-by-L2-alone=(\d+) waited-for-the-release=(\d+) longest-after-release=(\d+)', line)
         add('dbg.holds', m.group(1)); add('dbg.snoops', m.group(2)); add('dbg.dirty', m.group(3))
@@ -64,7 +65,7 @@ for line in open(log):
         tot['dbg.longest_after_release'] = max(tot.get('dbg.longest_after_release', 0), int(m.group(7)))
     elif line.startswith('directed '):
         m = re.match(r'directed (.+?)\s+dirty toN=(\d+) toB=(\d+) \| clean-T toN=(\d+) toB=(\d+) \| B toN=(\d+)', line)
-        w = m.group(1).strip()
+        w = m.group(1).strip().replace(' ', '_')
         for k, v in zip(['dirty_toN', 'dirty_toB', 'cleanT_toN', 'cleanT_toB', 'B_toN'], m.groups()[1:]): add('dir.' + w + '.' + k, v)
 tot['runs'] = runs
 json.dump(tot, sys.stdout, indent=1, sort_keys=True)

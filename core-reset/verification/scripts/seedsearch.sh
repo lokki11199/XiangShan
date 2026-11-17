@@ -1,20 +1,23 @@
 #!/bin/bash
 # Seed search for the mutants that simulation hits only now and then: finds the first 5 catching scen:seed
 # (scenarios 2 and 5, seeds 1..30) and writes scripts/rare_seeds.txt, one line per configuration and mutant:
-#   <KEEP|CFG_SWEEP> <MUTANT> <scen:seed> <scen:seed> ...      (read by scripts/regress.sh)
-#   MUTANTS="M1 CFG_SWEEP:M2 ..."   overrides the list; an item is MUTANT (both configurations) or CFG:MUTANT
-#   (CFG: KEEP | CFG_SWEEP). Entries of other mutants stay in the file.
+#   <FULL|CFG_KEEP> <MUTANT> <scen:seed> <scen:seed> ...      (read by scripts/regress.sh)
+# The seeds depend on the model and on the Verilator version (v5 lists are not valid): run this before the first
+# regression on a new machine / version, commit the new file and put it in the results and the PDF.
+#   MUTANTS="M1 CFG_KEEP:M2 ..."   overrides the list; an item is MUTANT (both configurations) or CFG:MUTANT
+#   (CFG: FULL | CFG_KEEP). Entries of other mutants stay in the file. A mutant without a catching seed gets a
+#   line without seeds (regress.sh prints SKIPPED: a hole, report it).
 cd "$(dirname "$0")/.."
 OUT=scripts/rare_seeds.txt
-DEFAULT="GATE_MUTANT_CUT_A+NO_CTRL_ASSERT FLUSH_MUTANT_NO_WBQ_WAIT+NO_CTRL_ASSERT KEEP:FLUSH_MUTANT_NO_MP_WAIT FLUSH_MUTANT_NO_BLOCK FLUSH_MUTANT_NO_BLOCK+NO_CTRL_ASSERT"
+DEFAULT="GATE_MUTANT_CUT_A+NO_CTRL_ASSERT QUIESCE_MUTANT_NO_WBQ_WAIT+NO_CTRL_ASSERT QUIESCE_MUTANT_NO_MP_WAIT QUIESCE_MUTANT_NO_BLOCK QUIESCE_MUTANT_NO_BLOCK+NO_CTRL_ASSERT"
 NEW=$(mktemp)
 for ITEM in ${MUTANTS:-$DEFAULT}; do
   case "$ITEM" in
     *:*) CFGS=${ITEM%%:*}; M=${ITEM#*:} ;;
-    *)   CFGS="KEEP CFG_SWEEP"; M=$ITEM ;;
+    *)   CFGS="FULL CFG_KEEP"; M=$ITEM ;;
   esac
   for N in $CFGS; do
-    C=$N; [ "$N" = KEEP ] && C=""
+    C=$N; [ "$N" = FULL ] && C=""
     D=$C${C:++}$M; found=""; n=0
     for S in 2 5; do for SEED in $(seq 1 30); do
       [ $n -ge 5 ] && break 2
