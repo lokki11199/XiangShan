@@ -173,7 +173,7 @@ module eq_gate_c (
   logic [3:0] r_id_opcode, r_id_source, r_id_sink; logic [1:0] r_id_param; logic [2:0] r_id_size;
   logic r_id_denied, r_id_corrupt; logic [63:0] r_id_data;
   logic r_oa_valid, r_ob_ready, r_oc_valid, r_od_ready, r_oe_valid;
-  logic [3:0] r_oa_opcode, r_oa_source; logic [2:0] r_oa_param, r_oa_size;   // RTL A opcode: 12 for model 5 (CBO) logic [15:0] r_oa_address;
+  logic [3:0] r_oa_opcode, r_oa_source; logic [2:0] r_oa_param, r_oa_size; logic [15:0] r_oa_address;
   logic [7:0] r_oa_mask; logic [63:0] r_oa_data; logic r_oa_corrupt;
   logic [2:0] r_oc_opcode, r_oc_param, r_oc_size; logic [3:0] r_oc_source; logic [15:0] r_oc_address;
   logic [63:0] r_oc_data; logic r_oc_corrupt;

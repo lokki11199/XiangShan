@@ -17,19 +17,22 @@ package dp;
   localparam int NSETU  = 3;               // sets in use
   localparam int NL     = NSETU * NTAGS;   // lines in the test
   localparam int TAG0   = 16;
+  // the DCache asserts that every Acquire address lies in PmemRanges (DCacheWrapper.scala:1802): bit 31 set, below 2^43
+  localparam logic [63:0] ABASE = 64'h8000_0000;
   typedef logic [ADDR_BITS-1:0] addr_t;
 
   function automatic addr_t line_base(int li);
     int seti, tagi;
     seti = li / NTAGS; tagi = li % NTAGS;
-    return addr_t'((64'(TAG0 + tagi) << (OFFB + SETB)) | (64'(seti) << OFFB));
+    return addr_t'(ABASE | (64'(TAG0 + tagi) << (OFFB + SETB)) | (64'(seti) << OFFB));
   endfunction
 
   // index of the line of an address, -1 outside the test space
   function automatic int line_of(addr_t a);
     int seti, tagi;
+    if ((64'(a) & ABASE) == 64'd0) return -1;
     seti = int'((64'(a) >> OFFB) & 64'(NSETS - 1));
-    tagi = int'(64'(a) >> (OFFB + SETB)) - TAG0;
+    tagi = int'((64'(a) & (ABASE - 64'd1)) >> (OFFB + SETB)) - TAG0;
     if (seti >= NSETU || tagi < 0 || tagi >= NTAGS) return -1;
     return seti * NTAGS + tagi;
   endfunction
@@ -291,7 +294,9 @@ module rtl_l2 import dp::*; (
             if (!probe_open) perr("K11", "ProbeAck without an open Probe");
             else begin
               if (c_address != probe_addr) perr("K11", "ProbeAck address differs from the Probe");
-              if (c_source != PROBE_SRC)   perr("K11", "ProbeAck source differs from the Probe");
+              // the DCache answers with the id of its writeback entry, the gate echoes the source of the Probe
+              if (c_source != PROBE_SRC && !(c_source >= REL_ID_BASE && c_source < REL_ID_BASE + NREL))
+                perr("K11", $sformatf("ProbeAck source %0d is neither the source of the Probe nor a writeback id", c_source));
               if (par > 3'd5) perr("K11", "ProbeAck param out of range");
               if (c_opcode == C_PROBEACKDATA && par > 3'd2) perr("K11", "ProbeAckData with a Report param (NtoN, TtoT, BtoB)");
               if (stale[l]) begin

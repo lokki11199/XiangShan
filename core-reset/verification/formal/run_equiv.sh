@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Formal equivalence: Chisel RTL (rtl/) vs hand-written models, 5 miters of formal/eq_chisel.sv.
+# Formal equivalence: Chisel RTL (rtl/) vs hand-written models, 8 miters of formal/eq_chisel.sv (TESTPLAN section 3.2).
 # usage: formal/run_equiv.sh [elab_outdir]     (default /home/user/XiangShan/build/core_reset_elab)
 # For every miter: sby bmc (depth 30, smtbmc/yices) and sby prove (abc pdr). One result line per miter.
 # Exit code = number of miters for which bmc or prove did not end in PASS (0 = all equivalent).
@@ -11,7 +11,7 @@ DEPTH=${DEPTH:-30}
 set +u; . "$VER/scripts/env.sh"; set -u
 
 need_extract=0
-for f in CoreResetCtrl_keep CoreResetCtrl_sweep TLQuiesceGate TLQuiesceGate_1 TLResetIsolation; do
+for f in CoreResetCtrl_full CoreResetCtrl_keep CoreResetCtrl_full_iso2 CoreResetCtrl_keep_iso2 TLQuiesceGate TLQuiesceGate_1 TLResetIsolation DCacheQuiesceUnit; do
   [ -s "$VER/rtl/$f.sv" ] || need_extract=1
 done
 if [ $need_extract = 1 ]; then
@@ -55,14 +55,17 @@ fails=0
 while IFS='|' read -r name top chp; do
   b=$(run_sby "$name" bmc "$top" "$chp"); rb=$?
   p=$(run_sby "$name" prove "$top" "$chp"); rp=$?
-  printf '%-10s bmc%d: %-16s prove: %s\n' "$name" "$DEPTH" "$b" "$p"
+  printf '%-15s bmc%d: %-16s prove: %s\n' "$name" "$DEPTH" "$b" "$p"
   [ $rb -ne 0 ] || [ $rp -ne 0 ] && fails=$((fails + 1))
 done <<LIST
-ctrl_keep|eq_ctrl|KEEP 1
-ctrl_sweep|eq_ctrl|KEEP 0
+ctrl_full|eq_ctrl|KEEP 0 -set ISO 1
+ctrl_keep|eq_ctrl|KEEP 1 -set ISO 1
+ctrl_full_iso2|eq_ctrl|KEEP 0 -set ISO 2
+ctrl_keep_iso2|eq_ctrl|KEEP 1 -set ISO 2
 gate_c|eq_gate_c|
 gate_ul|eq_gate_ul|
 iso|eq_iso|
+quiesce|eq_quiesce|
 LIST
 echo "failed miters: $fails"
 exit $fails

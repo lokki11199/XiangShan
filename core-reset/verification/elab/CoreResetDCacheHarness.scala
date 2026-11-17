@@ -151,6 +151,9 @@ class CoreResetDCacheHarness(keep: Boolean)(implicit p: Parameters) extends Lazy
     val ld_resp_replay = IO(Output(Bool()))
     val ld_resp_data   = IO(Output(UInt(64.W)))
     val ld_s2_hit      = IO(Output(Bool()))
+    // the error flags of the answer: the consumer that keeps errorArray (L1ErrorMetaArray) in the RTL; without it
+    // firtool prunes the array and the freeze / keep-reset checks of the array have nothing to look at
+    val ld_resp_err    = IO(Output(Bool()))
 
     // ---------------------------------------------------------------- DCache inputs: constants
     d.io.lsu.load.foreach(_ := DontCare)
@@ -265,6 +268,7 @@ class CoreResetDCacheHarness(keep: Boolean)(implicit p: Parameters) extends Lazy
       ld_resp_replay := l0.resp.bits.replay
       ld_resp_data := l0.resp.bits.data(63, 0)
       ld_s2_hit := l0.s2_hit
+      ld_resp_err := l0.resp.bits.error_delayed || l0.resp.bits.tl_error_delayed.asUInt.orR
     }
 
     // ---------------------------------------------------------------- sizes for the stand

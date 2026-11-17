@@ -1,6 +1,6 @@
 /***************************************************************************************
 * Elaboration harness for the core-only reset (verification only, not part of the patch).
-* Copy elab/*.scala into src/main/scala/xiangshan/ (CoreResetDCacheHarness.scala, CoreResetIdentElab.scala and
+* Copy the .scala files of elab/ into src/main/scala/xiangshan/ (CoreResetDCacheHarness.scala, CoreResetIdentElab.scala and
 * this file; the three compile together) and run, one target per JVM when the target holds SRAMs:
 *   mill -i xiangshan.runMain xiangshan.CoreResetElab <outdir> [ctrl_full,ctrl_keep,...]
 * Targets (each into its own directory <outdir>/<target>), TESTPLAN section 3.1:
