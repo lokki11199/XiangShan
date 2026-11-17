@@ -380,7 +380,8 @@ module cr_tb;
   logic held_q, req_q, fe_rst_q, isolate_q, alive_q, hart_q; int rst_len_any = 0;
   logic [7:0] iso_run = 8'd0;                         // consecutive cycles with isolate high before this cycle
   // statistics (4.6)
-  int n_iso_phases = 0, n_iso_cycles = 0, n_sram_in_iso = 0;
+  int n_iso_phases = 0, n_iso_cycles = 0, n_sram_in_iso = 0, n_s18_win = 0, n_s18_pre = 0;
+  logic qr_q = 1'b0, blk_win = 1'b0, win_q = 1'b0; wire win_now = blk_win || (quiesce_req && qr_q);
   int n_b2b_direct = 0, n_b2b_gap = 0, n_b2b_probes = 0;
   int n_rd [8];     // req-drop: 0 sIdle-pulse 1 sQuiesce 2 sDrain 3 sIso 4 sReset-early 5 sReset-late 6 sRelease 7 reraise-in-sReset
   always_ff @(posedge clk) if (!sys_rst && lc_v && lc_r && c_gate) n_gate_ack <= n_gate_ack + 1;
@@ -477,11 +478,17 @@ module cr_tb;
       n_sram_in_iso <= n_sram_in_iso + 1;
       if (KEEP) begin e_tb++; $display("[%0t] ERROR S15: array access while isolated (state %0d)", $time, ctl_st); end
     end
-    // S18: from the second cycle of the sequence until the core reset the DCache accepts no store, atomic, CMO or new
-    // miss (events are registered: ev_* of the previous cycle, state of that cycle = st_q)
-    if (!sys_rst && (ev_store || ev_miss) &&
-        (st_q == S_DRAIN || st_q == S_ISO || (st_q == S_QUIESCE && st_qq == S_QUIESCE))) begin
-      e_tb++; $display("[%0t] ERROR S18: the DCache accepts a %0s in state %0d", $time, ev_store ? "store" : "miss", st_q);
+    // S18: from the second cycle of l1.req (the DCache blocks from then on) until the core reset, the DCache accepts no
+    // store, atomic, CMO or new miss. The window opens when l1.req has stood for two cycles and stays open until the
+    // core reset (also if a mutant drops l1.req early: NO_REQ_IN_ISO); events are registered (ev_* of the previous cycle,
+    // win_q = the window in that cycle)
+    qr_q <= quiesce_req;
+    if (sys_rst || ctl_st == S_RESET || ctl_st == S_IDLE) blk_win <= 1'b0; else blk_win <= win_now;
+    win_q <= win_now;
+    if (win_now) n_s18_win <= n_s18_win + 1;
+    if (!sys_rst && (ev_store || ev_miss) && !win_q && st_q == S_QUIESCE) n_s18_pre <= n_s18_pre + 1;   // accepted before the block: the check is not empty
+    if (!sys_rst && (ev_store || ev_miss) && win_q) begin
+      e_tb++; $display("[%0t] ERROR S18: the DCache accepts a %0s after l1.req stood for two cycles (state %0d, l1.req %0d)", $time, ev_store ? "store" : "miss", st_q, quiesce_req);
     end
     if (isolate) n_iso_cycles <= n_iso_cycles + 1;
     if (isolate && !isolate_q) n_iso_phases <= n_iso_phases + 1;
@@ -963,6 +970,7 @@ module cr_tb;
     u_mon.report(); u_sb.report();
     $display("drain: sDrain-phases=%0d longest-sDrain=%0d probes-held-in-sDrain=%0d get-probes=%0d", n_drain, max_drain, n_held_drain, n_get_probe);
     $display("iso: phases=%0d cycles=%0d loads-clamped=%0d garbage-masked=%0d sram-access-in-iso=%0d", n_iso_phases, n_iso_cycles, n_lc, n_gm, n_sram_in_iso);
+    $display("s18: window-cycles=%0d accepted-before-the-block=%0d", n_s18_win, n_s18_pre);
     $display("b2b: direct=%0d gap=%0d probes-across=%0d", n_b2b_direct, n_b2b_gap, n_b2b_probes);
     $display("req-drop: sIdle-pulse=%0d sQuiesce=%0d sDrain=%0d sIso=%0d sReset-early=%0d sReset-late=%0d sRelease=%0d reraise-in-sReset=%0d",
              n_rd[0], n_rd[1], n_rd[2], n_rd[3], n_rd[4], n_rd[5], n_rd[6], n_rd[7]);

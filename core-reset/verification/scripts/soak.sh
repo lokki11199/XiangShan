@@ -18,7 +18,7 @@ P=0; F=0; : > $LOG
 one() {  # SCEN SEED [PLUSARGS]
   out=$(timeout 600 $B +SCEN=$1 +SEED=$2 $3 +verilator+seed+$2 +verilator+rand+reset+2 2>&1)
   echo "### SCEN=$1 SEED=$2 $3" >> $LOG
-  echo "$out" | grep -E "^(config|final|txmon|probe-sb|triggers|directed|debug-hold|drain|iso:|b2b:|req-drop:|full:|RESULT)" >> $LOG
+  echo "$out" | grep -E "^(config|final|txmon|probe-sb|triggers|directed|debug-hold|drain|iso:|s18:|b2b:|req-drop:|full:|RESULT)" >> $LOG
   if echo "$out" | grep -q "^RESULT: PASS$"; then P=$((P+1)); else F=$((F+1)); echo "FAIL $N SCEN=$1 SEED=$2 $3"; fi
 }
 for S in 1 2 3; do for SEED in $(seq 31 130); do one $S $SEED; done; done

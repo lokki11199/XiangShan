@@ -37,7 +37,7 @@ for line in open(log):
     elif line.startswith('probe-sb: ProbeAckData'):
         m = re.search(r'ProbeAckData=(\d+) clean-ProbeAck-from-T=(\d+).*dirty=(\d+) clean-T=(\d+) B=(\d+) \(toB (\d+)\)', line)
         for k, v in zip(['ProbeAckData', 'clean_from_T', 'hot_dirty', 'hot_cleanT', 'hot_B', 'hot_toB'], m.groups()): add('probe.' + k, v)
-    elif line.startswith(('iso:', 'b2b:', 'req-drop:', 'full:')):
+    elif line.startswith(('iso:', 's18:', 'b2b:', 'req-drop:', 'full:')):
         pre = line.split(':')[0].replace('-', '_')
         for k, v in re.findall(r'([\w-]+)=(\d+)', line): add(pre + '.' + k.replace('-', '_'), v)
     elif line.startswith('triggers hit:'):
