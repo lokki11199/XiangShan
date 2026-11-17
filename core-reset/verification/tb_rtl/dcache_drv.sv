@@ -5,7 +5,7 @@
 
   // ------------------------------------------------------------------ constants and state
   localparam int CMD_SWAP = 4, CMD_LR = 6, CMD_SC = 7, CMD_ADD = 8, CMD_OR = 10, CMD_CASD = 27;
-  localparam int TK_NOW = 0, TK_ACQ = 1, TK_ACQ_B = 2, TK_ACQ_P = 3, TK_CBO = 4, TK_REL = 5, TK_REL1 = 6, TK_ST_REPLAY = 7;
+  localparam int TK_NOW = 0, TK_ACQ = 1, TK_ACQ_B = 2, TK_ACQ_P = 3, TK_CBO = 4, TK_REL = 5, TK_REL1 = 6, TK_ST_TAKEN = 7;
   localparam int PG_OFF = 0, PG_NOW = 1, PG_LASTQ = 2, PG_DRAIN1 = 3, PG_DECIDE = 4, PG_ISO1 = 5, PG_ISO2 = 6,
                  PG_RESET1 = 7, PG_RELEASE1 = 8, PG_COREUP = 9;
 
@@ -60,7 +60,7 @@
         TK_CBO:   ev = ev_cbo;
         TK_REL:   ev = ev_rel_first;
         TK_REL1:  ev = (ph == 3'd5) && (ph_q != 3'd5);
-        TK_ST_REPLAY: ev = st_replay_valid;                    // a store missed: its miss entry exists
+        TK_ST_TAKEN: ev = st_req_valid && st_req_ready;        // the DCache took a store
         default:  ev = 1'b0;
       endcase
       if (ev) begin trig_armed <= 1'b0; trig_pending <= 1'b1; trig_dly <= trig_delay; end
@@ -402,16 +402,17 @@
   endtask
 
   // WFI holds the Acquire of a store miss in the MissQueue; the request comes while it is held. The drain must
-  // release it (quiesceBlock clears wfiReq), or the sequence could never finish. The request is raised 10 cycles
-  // after the replay answer of the store: the miss entry exists by then. (A fixed delay after the start is not
-  // enough: after a reset the tag array is being initialised for NSETS cycles and refuses stores.)
+  // release it (quiesceBlock clears wfiReq), or the sequence could never finish. The request is raised 20 cycles
+  // after the DCache took the store: the store missed (a fresh line) and waits in its miss entry, which gives no
+  // answer until the refill. (A fixed delay after the start is not enough: after a reset the tag array is
+  // initialised for NSETS cycles and refuses stores.)
   task automatic scn_d7();
     bit ok; int n0;
     for (int i = 0; i < 2; i++) begin
       setup(3, 4, 4);
       n0 = l2_n_acq;
       wfi_req <= 1'b1; tick(3);
-      arm(TK_ST_REPLAY, 10, 3);
+      arm(TK_ST_TAKEN, 20, 3);
       do_store(fresh(), 1'b0, ok);             // the Acquire is held by WFI
       wait_seq(2000);
       wfi_req <= 1'b0;
