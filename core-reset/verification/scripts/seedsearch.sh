@@ -28,6 +28,7 @@ for ITEM in ${MUTANTS:-$DEFAULT}; do
       if [ "$r" != 0 ]; then found="$found $S:$SEED"; n=$((n+1)); fi
     done; done
     echo "$N $M$found" | tee -a $NEW
+    rm -rf "build/obj_$D" "build/obj_$D.log"   # disk: the build of this mutant is not needed any more
   done
 done
 # merge: old entries of the mutants not searched this time stay

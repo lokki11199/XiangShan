@@ -24,6 +24,13 @@ RARE=scripts/rare_seeds.txt
 EQ=""   # set to "+EQUIV" for the expected-equivalent mutants (frozen list, TESTPLAN 4.7); "+FORMALONLY": a mutant that is
         # silent in simulation but proved by a formal property (listed by regress_summary.py, not counted as a hole of the frozen list)
 cfgname() { case "$1" in "") echo FULL;; *) echo "$1";; esac; }
+# disk: every mutant has its own Verilator build (build/obj_<cfg>+<mutant>); it is removed right after the runs of
+# that mutant. The four base builds (obj, obj_CFG_KEEP, obj_ISO2, obj_CFG_KEEP+ISO2) are kept.
+clean_obj() {  # CFG MUTANT
+  local D=$1${2:+${1:++}$2}
+  case "$D" in ""|CFG_KEEP|ISO2|CFG_KEEP+ISO2) return;; esac
+  rm -rf "build/obj_$D" "build/obj_$D.log"
+}
 run() {  # CFG SCEN SEED [DEFINES] [PLUSARGS]
   local N; N=$(cfgname "$1"); local D=$1${4:+${1:++}$4}
   local K="CFG=$N SCEN=$2 SEED=$3 ${5:+$5 }${4:+MUTANT=$4 }${EQ:+$EQ }${FO:+$FO }:"
@@ -37,12 +44,14 @@ run() {  # CFG SCEN SEED [DEFINES] [PLUSARGS]
 mut() {  # CFG MUTANT "SCEN..." [SEEDS]: the mutant on each listed scenario, seeds 1-3 by default
   local C=$1 M=$2 SC=$3 SEEDS=${4:-1 2 3} S SEED
   for SEED in $SEEDS; do for S in $SC; do run "$C" $S $SEED $M; done; done
+  clean_obj "$C" "$M"
 }
 rare() {  # CFG MUTANT: scen:seed list from scripts/rare_seeds.txt
   local C=$1 M=$2 L P N; N=$(cfgname "$C")
   L=$(awk -v c="$N" -v m="$M" '$1 == c && $2 == m { for (i = 3; i <= NF; i++) printf "%s ", $i }' $RARE 2>/dev/null)
   if [ -z "$L" ]; then echo "CFG=$N MUTANT=$M : SKIPPED (no entry in $RARE, run scripts/seedsearch.sh)"; return; fi
   for P in $L; do run "$C" ${P%%:*} ${P##*:} $M; done
+  clean_obj "$C" "$M"
 }
 if [ -z "$SKIP_DESIGN" ]; then
   for C in "" CFG_KEEP; do
