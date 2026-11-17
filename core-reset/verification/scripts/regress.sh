@@ -105,10 +105,17 @@ for C in "" CFG_KEEP; do
   EQ="+EQUIV"; mut "$C" CTRL_MUTANT_NO_L1_IDLE "2 6"; mut "$C" CTRL_MUTANT_NO_ALIVE 5; EQ=""
 done
 # FULL: Probes answered by the gate in sReset / sRelease only, tags and meta cleared with the core
-for M in GATE_MUTANT_NO_ACKB CTRL_MUTANT_NOKEEP_HOLDB CTRL_MUTANT_ACK_IN_ISO NOKEEP_MUTANT_META_KEPT; do mut "" $M "2 6"; done
+for M in GATE_MUTANT_NO_ACKB CTRL_MUTANT_NOKEEP_HOLDB NOKEEP_MUTANT_META_KEPT; do mut "" $M "2 6"; done
+# ACK_IN_ISO is visible only for a Probe offered in the one cycle of sIso: directed on SCEN 6 (case 6), on the random
+# SCEN 2 only with the seeds that hit that window (rare)
+mut "" CTRL_MUTANT_ACK_IN_ISO 6
+rare "" CTRL_MUTANT_ACK_IN_ISO
 mut "" GATE_MUTANT_ACK_PARAM "6 7"
 # KEEP: Probes held, meta / error / tag on the tile reset, accesses of the surviving arrays masked by freeze
-mut CFG_KEEP GATE_MUTANT_NO_HOLDB "2 6"
+# NO_HOLDB: with KEEP channel B is clamped by isolate from sIso on, hold_b matters in sDrain only (a Probe offered there):
+# directed on SCEN 6 (cases 4, 7), on SCEN 2 with the seeds that hit that window (rare)
+mut CFG_KEEP GATE_MUTANT_NO_HOLDB 6
+rare CFG_KEEP GATE_MUTANT_NO_HOLDB
 mut CFG_KEEP META_MUTANT_CORE_RESET 2
 mut CFG_KEEP META_MUTANT_CORE_RESET+NO_FREEZE_CHECK "2 6 7"
 for M in TAG_MUTANT_CORE_RESET FREEZE_MUTANT_NO_SRAM_MASK FREEZE_MUTANT_NO_READ_MASK CTRL_MUTANT_LATE_FREEZE; do mut CFG_KEEP $M "2 6"; done
