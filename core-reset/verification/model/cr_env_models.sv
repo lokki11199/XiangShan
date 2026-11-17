@@ -157,6 +157,7 @@ module cr_l2 #(parameter bit KEEP = 1) (
   input  logic fsnp_force,             // probe even if the directory lists no copy (the client answers NtoN)
   output logic fsnp_ack, output logic fsnp_l2only,
   input  logic spur_en,                // now and then a Probe of a line the directory lists as N (legal TileLink)
+  input  logic a_hold,                 // directed test: channel A of the DCache is not ready (an Acquire stays unsent in the MissQueue)
   input  logic core_in_reset,          // for checks only
   input  logic b_to_gate,              // a Probe accepted now is taken by the gate (answered NtoN), not by the core
   // port 0: DCache (TL-C)
@@ -198,7 +199,7 @@ module cr_l2 #(parameter bit KEEP = 1) (
   logic [31:0] rnd; always_ff @(posedge clk) rnd <= $urandom;
   logic [31:0] stl; always_ff @(posedge clk) stl <= $urandom;   // ready stalls (slow)
 
-  assign a_ready = !acq_v && (!slow || stl[1:0] != 2'b00);
+  assign a_ready = !acq_v && !a_hold && (!slow || stl[1:0] != 2'b00);
   // slow: random stalls, and now and then a long one (20..60 cycles), as when the L2 C-channel buffers fill
   int c_burst;
   always_ff @(posedge clk)

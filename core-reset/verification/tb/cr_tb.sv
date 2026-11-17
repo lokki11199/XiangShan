@@ -23,10 +23,10 @@
 //   +SCEN=2  12 back-to-back core resets with random gaps
 //   +SCEN=3  request of random length (2..2000 cycles: the core is held in reset), x4
 //   +SCEN=4  naive core reset without the sequence (reproduces the problem; errors expected)
-//   +SCEN=5  directed: the procedure starts exactly while a transaction of class C1..C15 is in flight
+//   +SCEN=5  directed: the procedure starts exactly while a transaction of class C1..C16 is in flight
 //            (cr_txmon classes C1..C10, C11 MSHR with an unsent Acquire, C12 Probe offered in this cycle,
 //            C13 a load looks up the arrays, C14 CBO in flight (not modelled: SKIPPED), C15 Probe offered in the
-//            decision cycle)
+//            decision cycle, C16 an Acquire stays unsent in the MissQueue (L2 holds A not ready) while sQuiesce waits for it)
 //   +SCEN=6  directed Probes of L1D lines (dirty / clean T / B, toN / toB), nine cases: 0 offered in sReset,
 //            1 in sRelease, 2 right after the sequence, 3 at the start of sQuiesce, 4 in the first cycle of sDrain,
 //            5 in the last cycle of sQuiesce (taken by the gate, sDrain waits for its ProbeAck), 6 in the first
@@ -75,7 +75,7 @@ module cr_tb;
 `endif
   logic clk = 0; always #5 clk = ~clk;
   logic sys_rst, traffic_en, snoop_en, req_task, force_core_rst, slow_en;
-  logic trig_arm; int trig_sel; logic trig_cond;
+  logic trig_arm; int trig_sel; logic trig_cond; logic a_hold = 1'b0;   // a_hold: L2 holds A of the DCache not ready (SCEN 5, C16)
   wire  req = req_task || (trig_arm && trig_cond);   // request: from the scenario or from a directed trigger
   logic fsnp_req, fsnp_ack, fsnp_l2only; logic [3:0] fsnp_addr; logic [1:0] fsnp_param;
   int   fsnp_arm;                                    // SCEN 6: snoop started by a trigger (cases 3, 4, 5)
@@ -238,7 +238,7 @@ module cr_tb;
     .od_valid(md_v), .od_ready(md_r), .od_op(md_op), .od_param(2'd0), .od_src(md_src), .od_sink(4'd0), .od_data(md_dat),
     .oe_valid(g1_oev), .oe_ready(1'b1), .oe_sink(g1_oes));
 
-  cr_l2 #(.KEEP(KEEP)) u_l2 (.clk, .rst(sys_rst), .rp_full(rp_now && !KEEP), .snoop_en, .slow(slow_en), .fsnp_v, .fsnp_addr, .fsnp_param, .fsnp_force, .fsnp_ack,
+  cr_l2 #(.KEEP(KEEP)) u_l2 (.clk, .rst(sys_rst), .rp_full(rp_now && !KEEP), .a_hold, .snoop_en, .slow(slow_en), .fsnp_v, .fsnp_addr, .fsnp_param, .fsnp_force, .fsnp_ack,
     .fsnp_l2only, .spur_en,
     .core_in_reset(core_rst && !sys_rst), .b_to_gate(b_gate),
     .a_valid(la_v), .a_ready(la_r), .a_op(la_op), .a_param(la_par), .a_src(la_src), .a_addr(la_addr), .a_data(la_dat),
@@ -609,12 +609,23 @@ module cr_tb;
   endtask
 
   // ---------------- SCEN=5: start the procedure while a transaction of class c is in flight ----------------
-  int n_trig_hit [16], n_trig_miss [16];
+  int n_trig_hit [17], n_trig_miss [17];
   task automatic core_reset_on(input int c);
     int n0 = n_resets; int i = 0; int pa = -1;
     if (c == 14) begin   // CBO in flight: not modelled in cr_dcache (TESTPLAN 4.1 item 7: optional); exercised by the RTL test (D6)
       if (n_trig_miss[14] == 0 && n_trig_hit[14] == 0) $display("SKIPPED C14: CBO is not modelled in cr_dcache");
       n_trig_miss[14]++; return;
+    end
+    if (c == 16) begin   // an Acquire waits unsent in the MissQueue (L2 does not take A) while the sequence runs through sQuiesce:
+                         // the drain must wait for the MissQueue (mq_empty); the gates are quiet (nothing crossed), only the DCache knows
+      a_hold = 1'b1;
+      while (!(u_dc.mq_v && !u_dc.mq_sent) && i < 20000) begin @(posedge clk); i++; end
+      if (!(u_dc.mq_v && !u_dc.mq_sent)) begin a_hold = 1'b0; n_trig_miss[c]++; core_reset(1); return; end
+      req_task = 1; cycles(40); a_hold = 1'b0; req_task = 0;   // the request is fixed: the sequence goes on, A is released after 40 cycles
+      wait_for("core reset", 20000, in_reset, 1'b1);
+      wait_for("sequence end", 30000, busy, 1'b0);
+      check_resets(n0); n_trig_hit[c]++;
+      return;
     end
     if (c == 15) begin   // a Probe offered in the decision cycle of sDrain
       for (int w = 2; w >= 1 && pa < 0; w--) pa = pick_line(2'(w));
@@ -1003,8 +1014,8 @@ module cr_tb;
       $display("full: lost-dirty=%0d foreign-lines=%0d foreign-grant=%0d nton-stale=%0d reacquire-stale=%0d gate-acks=%0d skipped-checks=%0d",
                n_lost_dirty, n_foreign_lines, n_foreign_grant, n_nton_stale, n_reacq_stale, n_gate_ack, n_skipped);
     if (scen == 5) begin
-      $write("triggers hit:"); for (int c = 1; c <= 15; c++) $write(" C%0d=%0d", c, n_trig_hit[c]); $display("");
-      $write("triggers missed:"); for (int c = 1; c <= 15; c++) $write(" C%0d=%0d", c, n_trig_miss[c]); $display("");
+      $write("triggers hit:"); for (int c = 1; c <= 16; c++) $write(" C%0d=%0d", c, n_trig_hit[c]); $display("");
+      $write("triggers missed:"); for (int c = 1; c <= 16; c++) $write(" C%0d=%0d", c, n_trig_miss[c]); $display("");
     end
     if (scen == 7)
       $display("debug-hold: holds=%0d snoops-during-hold=%0d (dirty %0d) longest-snoop-to-ProbeAck=%0d served-by-L2-alone=%0d waited-for-the-release=%0d longest-after-release=%0d data-from-hot-L1D=%0d crossed-an-eviction=%0d",
@@ -1054,7 +1065,7 @@ module cr_tb;
       2: begin for (int k = 0; k < 12; k++) begin core_reset(1); cycles($urandom_range(0, 400)); end cycles(2000); finish(0); end
       3: begin for (int k = 0; k < 4; k++) begin core_reset($urandom_range(2, 2000)); cycles(2000); end finish(0); end
       5: begin
-        for (int r = 0; r < 3; r++) for (int c = 1; c <= 15; c++) begin core_reset_on(c); cycles($urandom_range(50, 600)); end
+        for (int r = 0; r < 3; r++) for (int c = 1; c <= 16; c++) begin core_reset_on(c); cycles($urandom_range(50, 600)); end
         finish(0);
       end
       6: begin

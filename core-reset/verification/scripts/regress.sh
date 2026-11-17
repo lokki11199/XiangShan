@@ -76,6 +76,8 @@ for C in "" CFG_KEEP; do
   mut "$C" CTRL_MUTANT_NO_EARLY_BLOCK "2 5"
   mut "$C" CTRL_MUTANT_NO_EARLY_QUIET "2 5"
   mut "$C" CTRL_MUTANT_RESET_EARLY "3 7"
+  # NO_MQ_WAIT: directed case C16 of SCEN 5 (L2 holds A not ready, the Acquire stays unsent in the MissQueue; the gates are quiet)
+  mut "$C" QUIESCE_MUTANT_NO_MQ_WAIT 5
   # NO_REQ_IN_ISO: with isoCycles = 1 the DCache block drops a cycle after l1.req, that is in sReset: invisible in simulation,
   # caught by P23 (formal); the ISO2 configurations below see it (S18)
   FO="+FORMALONLY"; mut "$C" CTRL_MUTANT_NO_REQ_IN_ISO "2 5"; FO=""
@@ -88,7 +90,6 @@ for C in "" CFG_KEEP; do
   rare "$C" QUIESCE_MUTANT_NO_BLOCK
   rare "$C" QUIESCE_MUTANT_NO_BLOCK+NO_CTRL_ASSERT
   rare "$C" QUIESCE_MUTANT_NO_MP_WAIT
-  rare "$C" QUIESCE_MUTANT_NO_MQ_WAIT
   # expected equivalent (frozen list, TESTPLAN 4.7): the DCache idle flag is redundant with done + the gates' quiet;
   # NO_ALIVE: in XSTile the frontend is the last of the ResetGen chain, after the DCache, so waiting for the frontend
   # also covers alive (the formal proof catches it: its environment allows any order)

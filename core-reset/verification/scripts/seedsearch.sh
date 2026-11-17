@@ -9,7 +9,7 @@
 #   line without seeds (regress.sh prints SKIPPED: a hole, report it).
 cd "$(dirname "$0")/.."
 OUT=scripts/rare_seeds.txt
-DEFAULT="GATE_MUTANT_CUT_A+NO_CTRL_ASSERT QUIESCE_MUTANT_NO_WBQ_WAIT+NO_CTRL_ASSERT QUIESCE_MUTANT_NO_MP_WAIT QUIESCE_MUTANT_NO_MQ_WAIT QUIESCE_MUTANT_NO_BLOCK QUIESCE_MUTANT_NO_BLOCK+NO_CTRL_ASSERT"
+DEFAULT="GATE_MUTANT_CUT_A+NO_CTRL_ASSERT QUIESCE_MUTANT_NO_WBQ_WAIT+NO_CTRL_ASSERT QUIESCE_MUTANT_NO_MP_WAIT QUIESCE_MUTANT_NO_BLOCK QUIESCE_MUTANT_NO_BLOCK+NO_CTRL_ASSERT"
 NEW=$(mktemp)
 for ITEM in ${MUTANTS:-$DEFAULT}; do
   case "$ITEM" in
@@ -19,7 +19,10 @@ for ITEM in ${MUTANTS:-$DEFAULT}; do
   for N in $CFGS; do
     C=$N; [ "$N" = FULL ] && C=""
     D=$C${C:++}$M; found=""; n=0
-    for S in 2 5; do for SEED in $(seq 1 30); do
+    # QUIESCE_MUTANT_NO_MP_WAIT is the rarest one: scenarios 2, 3, 5, seeds 1..120
+    SCS="2 5"; SDS="$(seq 1 30)"
+    case "$M" in QUIESCE_MUTANT_NO_MP_WAIT) SCS="5 2 3"; SDS="$(seq 1 120)";; esac
+    for S in $SCS; do for SEED in $SDS; do
       [ $n -ge 5 ] && break 2
       r=$(timeout 300 scripts/run.sh $S $SEED "$D" 2>&1 | grep -cE "ERROR|%Error|TIMEOUT|RESULT: FAIL")
       if [ "$r" != 0 ]; then found="$found $S:$SEED"; n=$((n+1)); fi
