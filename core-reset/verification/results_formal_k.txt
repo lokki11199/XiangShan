@@ -3,3 +3,37 @@ tools: Yosys 0.70 , abc pdr, smtbmc yices
 design prove rstCycles=100 (abc pdr, unbounded): PASS  (106.69 sec)
 design prove rstCycles=16 (abc pdr, unbounded): PASS  (12.55 sec)
 design      bmc: not run (the unbounded proofs with abc pdr cover every depth; the assumptions are shown satisfiable by the covers reached)
+design      cover (as assert, abc pdr; step = length of the trace found by pdr, not necessarily the shortest): PASS (11 reached: C1 step 9, C2 step 9, C3 step 29, C4 step 27, C5 step 29, C6 step 53, C8 step 28, C9 step 28, C10 step 52, C11 step 28, C12 step 27,)
+CTRL_MUTANT_NO_DRAIN             bmc : FAIL at cycle 4  P19_decision_after_done_idle P1_reset_point_clean 
+CTRL_MUTANT_STALE_QUIET          bmc : FAIL at cycle 4  P19_decision_after_done_idle P1_reset_point_clean 
+CTRL_MUTANT_NO_L1_IDLE           bmc : FAIL at cycle 4  P19_decision_after_done_idle 
+CTRL_MUTANT_NO_ALIVE             bmc 60 clean or >300s, (pdr): FAIL at cycle 27  P22_iso_drop_after_core_up 
+CTRL_MUTANT_NO_FE_WAIT           bmc 60 clean or >300s, (pdr): FAIL at cycle 25  P20_run_only_after_frontend P22_iso_drop_after_core_up 
+CTRL_MUTANT_NO_EARLY_QUIET       bmc : FAIL at cycle 3  P10_noncoherent_quiet_in_drain 
+CTRL_MUTANT_NO_EARLY_BLOCK       bmc : FAIL at cycle 2  P9_no_new_noncoherent 
+CTRL_MUTANT_LATE_HOLDB           bmc : FAIL at cycle 3  P18_b_held_from_first_drain_cycle 
+CTRL_MUTANT_NO_HOLD_IN_RELEASE   bmc : FAIL at cycle 22  P17_b_closed_when_isolated 
+CTRL_MUTANT_RESET_EARLY          bmc : FAIL at cycle 22  P13_reset_until_req_drops 
+CTRL_MUTANT_ISO_LATE             bmc : FAIL at cycle 4  P16_isolation_only_in_procedure 
+CTRL_MUTANT_ISO_EARLY_DROP       bmc : FAIL at cycle 22  P16_isolation_covers_reset P16_isolation_only_in_procedure P22_iso_drop_after_core_up 
+CTRL_MUTANT_NO_ISO_LEAD          bmc : FAIL at cycle 4  P21_iso_lead 
+CTRL_MUTANT_NO_REQ_IN_ISO        bmc : FAIL at cycle 4  P23_l1_req_through_iso 
+CTRL_MUTANT_LATE_HART_IN_RESET   bmc : FAIL at cycle 2  P11_hart_in_reset_is_busy 
+CTRL_MUTANT_BUSY_GAP             bmc 60 clean or >300s, (pdr): FAIL at cycle 27  P25_busy_falls_only_from_release P25_no_busy_gap 
+CTRL_MUTANT_IN_RESET_WIDE        bmc : FAIL at cycle 22  P6_reset_only_in_reset 
+GATE_MUTANT_ALWAYS_QUIET         bmc : FAIL at cycle 2  P5_quiet_is_sound 
+GATE_MUTANT_CUT_A                bmc : FAIL at cycle 2  P4_a_message_not_cut 
+GATE_MUTANT_NO_ISO_C             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ISO_D             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_ISO_E             bmc : FAIL at cycle 4  P15_isolation_tile_side 
+ISO_MUTANT_NO_ISO                bmc : FAIL at cycle 4  P15_isolation_tile_side 
+GATE_MUTANT_NO_HOLDB             bmc : FAIL at cycle 3  P18_b_held_from_first_drain_cycle 
+CTRL_MUTANT_LATE_FREEZE          bmc : FAIL at cycle 4  P24_freeze_from_iso 
+GATE_MUTANT_NO_ISO_A             prove: PASS (equivalent mutant, expected PASS)
+ISO_MUTANT_ALWAYS_QUIET          prove: PASS (equivalent mutant, expected PASS)
+=== configuration k2: KEEP iso2 (-D CFG_KEEP ISO2)
+design prove rstCycles=16 isoCycles=2 (abc pdr, unbounded): PASS  (10.63 sec)
+design      cover (as assert, abc pdr; step = length of the trace found by pdr, not necessarily the shortest): PASS (1 reached: C14 step 6,)
+CTRL_MUTANT_ISO_SHORT            bmc : FAIL at cycle 5  P21_iso_lead 
+CTRL_MUTANT_NO_ISO_LEAD          bmc : FAIL at cycle 4  P21_iso_lead 
+formal: 0 unexpected result(s)

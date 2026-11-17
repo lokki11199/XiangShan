@@ -1,0 +1,14 @@
+tools: Yosys 0.70 , abc pdr, smtbmc yices
+=== adapters: fv_adapters (isolation of the three adapters, free control inputs)
+adapters prove (abc pdr, unbounded): PASS  (1.93 sec)
+GATE_MUTANT_NO_ISO_A             adapters bmc : FAIL at cycle 1  L1_tlc_isolation 
+GATE_MUTANT_NO_ISO_B             adapters bmc : FAIL at cycle 1  L1_tlc_isolation 
+GATE_MUTANT_NO_ISO_C             adapters bmc : FAIL at cycle 1  L1_tlc_isolation 
+GATE_MUTANT_NO_ISO_D             adapters bmc : FAIL at cycle 1  L1_tlc_isolation 
+GATE_MUTANT_NO_ISO_E             adapters bmc : FAIL at cycle 1  L1_tlc_isolation 
+GATE_MUTANT_ALWAYS_QUIET         adapters bmc : FAIL at cycle 2  L4_gate_c_quiet_is_sound 
+GATE_MUTANT_CUT_A                adapters bmc : FAIL at cycle 2  L5_a_cut_only_at_boundary 
+GATE_MUTANT_ACK_PARAM            adapters bmc : FAIL at cycle 2  L6_ack_is_NtoN 
+ISO_MUTANT_NO_ISO                adapters bmc : FAIL at cycle 1  L3_iso_isolation 
+ISO_MUTANT_ALWAYS_QUIET          adapters bmc : FAIL at cycle 2  L4_iso_quiet_is_sound 
+adapters: 0 unexpected result(s)
