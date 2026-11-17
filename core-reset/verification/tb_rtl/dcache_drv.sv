@@ -249,6 +249,7 @@
   // a stream of loads (D13): every cycle, to the lines of the list, until it is switched off
   bit ld_stream_en = 1'b0, ld_stream_was = 1'b0; int ld_stream_lines [3]; int ld_stream_k = 0, ld_iso_fires = 0;
   always @(posedge clk) begin
+    if (ld_stream_en && ph == 3'd4) ld_stream_en = 1'b0;    // the core is reset: its load stream ends there
     ld_stream_was <= ld_stream_en;
     if (ld_stream_en) begin
       if (core_alive) begin
@@ -530,6 +531,32 @@
     else if (c == "R")   scn_rand();
     else fail("TB", {"unknown case ", c});
   endtask
+
+  // ------------------------------------------------------------------ trace for debugging (+DBG): one line per event
+  bit dbg = 1'b0;
+  initial dbg = $test$plusargs("DBG");
+  always @(posedge clk) if (dbg && !rst) begin
+    if (ph != ph_q) $display("DBG %0d phase %0d -> %0d", cycle, ph_q, ph);
+    if (st_req_valid && st_req_ready) $display("DBG %0d store taken addr=%h id=%0d", cycle, st_req_addr, st_req_id);
+    if (st_hit_valid) $display("DBG %0d store hit id=%0d", cycle, st_hit_id);
+    if (st_replay_valid) $display("DBG %0d store replay id=%0d", cycle, st_replay_id);
+    if (amo_req_valid && amo_req_ready) $display("DBG %0d amo taken cmd=%0d addr=%h", cycle, amo_cmd, amo_addr);
+    if (amo_resp_valid) $display("DBG %0d amo resp miss=%0b replay=%0b", cycle, amo_resp_miss, amo_resp_replay);
+    if (cmo_req_valid && cmo_req_ready) $display("DBG %0d cmo taken op=%0d", cycle, cmo_opcode);
+    if (cmo_resp_valid) $display("DBG %0d cmo resp", cycle);
+    if (ld_resp_valid) $display("DBG %0d load resp miss=%0b replay=%0b", cycle, ld_resp_miss, ld_resp_replay);
+    if (l2io_0_a_valid && l2io_0_a_ready) $display("DBG %0d L2 A op=%0d param=%0d addr=%h src=%0d", cycle,
+      l2io_0_a_bits_opcode, l2io_0_a_bits_param, l2io_0_a_bits_address, l2io_0_a_bits_source);
+    if (l2io_0_b_valid && l2io_0_b_ready) $display("DBG %0d L2 B probe param=%0d addr=%h", cycle, l2io_0_b_bits_param, l2io_0_b_bits_address);
+    if (l2io_0_c_valid && l2io_0_c_ready) $display("DBG %0d L2 C op=%0d param=%0d addr=%h src=%0d", cycle,
+      l2io_0_c_bits_opcode, l2io_0_c_bits_param, l2io_0_c_bits_address, l2io_0_c_bits_source);
+    if (l2io_0_d_valid && l2io_0_d_ready) $display("DBG %0d L2 D op=%0d src=%0d", cycle, l2io_0_d_bits_opcode, l2io_0_d_bits_source);
+    if (l2io_0_e_valid && l2io_0_e_ready) $display("DBG %0d L2 E", cycle);
+    if (quiesce_done && !done_q) $display("DBG %0d quiesce done", cycle);
+    if (wfi_req && !wfi_q) $display("DBG %0d wfi_req up", cycle);
+  end
+  bit wfi_q = 1'b0;
+  always @(posedge clk) wfi_q <= wfi_req;
 
   // ------------------------------------------------------------------ end of the case
   task automatic finish_case();
