@@ -63,7 +63,7 @@ def table(P):
     i("wfi_req"); o("wfi_safe")
     # load
     i("ld_req_valid"); o("ld_req_ready"); i("ld_req_addr", P["PADDR_BITS"])
-    o("ld_resp_valid"); o("ld_resp_miss"); o("ld_resp_replay"); o("ld_resp_data", 64); o("ld_s2_hit")
+    o("ld_resp_valid"); o("ld_resp_miss"); o("ld_resp_replay"); o("ld_resp_data", 64); o("ld_s2_hit"); o("ld_resp_err")
     # TL-C towards L2: the bench is the client, so A, C, E leave it and B, D come in
     sz, src, snk, ad = P["SIZE_BITS"], P["SRC_BITS"], P["SNK_BITS"], P["ADDR_BITS"]
     dw, mw = P["BEAT_BYTES"] * 8, P["BEAT_BYTES"]
