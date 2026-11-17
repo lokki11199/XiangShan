@@ -39,7 +39,7 @@ module tile_iso_tb;
 
   // ---- checks T4..T6
   int e_t4 = 0, e_t5 = 0, e_t6 = 0, e_t7 = 0;
-  int n_iso_cycles = 0, n_iso_first = 0, n_seq = 0, n_core_resets = 0, n_t3_pf = 0, n_t4_seen = 0, n_keep_seen = 0;
+  int n_iso_cycles = 0, n_iso_first = 0, n_seq = 0, n_core_resets = 0, n_t3_pf = 0, n_t3_master = 0, n_t4_seen = 0, n_keep_seen = 0;
   logic core_rst_q = 1'b0, alive_q = 1'b0, fe_q = 1'b0, busy_q = 1'b0;
   task automatic err(input string t, input string m, inout int n);
     n++; if (n <= 20) $display("[%0t] ERROR %s: %s", $time, t, m);
@@ -50,6 +50,7 @@ module tile_iso_tb;
     if (chk_first) n_iso_first++;
     if (tile_up && busy_now && !busy_q) n_seq++;
     if (tile_up && busy_now && `TI_CORE.ti_pf_out) n_t3_pf++;
+    if (tile_up && busy_now && `TI_CORE.ti_pf_master) n_t3_master++;
     // T4
 `ifndef TI_NO_TLB_REQ
     if (tile_up && busy_now && `TI_CORE.ti_tlb_req_valid) err("T4", "l2_tlb_req.req.valid reaches the core while busy", e_t4);
@@ -111,14 +112,14 @@ module tile_iso_tb;
     int t1, t2, t3, t3c; string bad;
     cycles(20);
     t1 = `TI_L2.n_t1 + dut.n_t1; t2 = `TI_L2.n_t2 + dut.n_t2; t3 = `TI_L2.n_t3 + dut.n_t3; t3c = `TI_L2.n_t3_checked + dut.n_t3_checked;
-    $display("tile-iso: sequences=%0d core-resets=%0d isolate-cycles=%0d first-cycles=%0d t3-samples=%0d t3-pf-from-core=%0d t4-unmasked-seen=%0d keep-reset-in-tile-reset=%0d",
-             n_seq, n_core_resets, n_iso_cycles, n_iso_first, t3c, n_t3_pf, n_t4_seen, n_keep_seen);
+    $display("tile-iso: sequences=%0d core-resets=%0d isolate-cycles=%0d first-cycles=%0d t3-samples=%0d t3-pf-from-core=%0d t3-pf-master-from-core=%0d t4-unmasked-seen=%0d keep-reset-in-tile-reset=%0d",
+             n_seq, n_core_resets, n_iso_cycles, n_iso_first, t3c, n_t3_pf, n_t3_master, n_t4_seen, n_keep_seen);
     $display("tile-iso errors: T1=%0d T2=%0d T3=%0d T4=%0d T5=%0d T6=%0d T7=%0d", t1, t2, t3, e_t4, e_t5, e_t6, e_t7);
     bad = "";
     if (t1) bad = {bad, " T1"};
     if (t2 || `TI_T2_MISSING != "") bad = {bad, " T2"};
     if (`TI_T2_MISSING != "") $display("ERROR T2: patterns without a signal (names differ in this RTL): %s", `TI_T2_MISSING);
-    if (t3 || t3c == 0 || n_t3_pf == 0) bad = {bad, " T3"};
+    if (t3 || t3c == 0 || n_t3_pf == 0 || n_t3_master == 0) bad = {bad, " T3"};
     if (e_t4) bad = {bad, " T4"};
 `ifndef TI_NO_TLB_REQ
     if (n_t4_seen == 0) bad = {bad, " T4(empty)"};

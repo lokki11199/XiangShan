@@ -55,7 +55,7 @@ T2_PATTERNS = [
 # T2 patterns that must find at least one signal (the others are optional in a configuration)
 T2_REQUIRED = [r"cpu_halt", r"(^|_)msiAck", r"groups_\d+_valid", r"iretire", r"itype", r"robHeadPaddr_valid",
                r"l2_tlb_req_req_ready", r"l2_tlb_req_resp_valid", r"resetInFrontend", r"l2_pmp_resp"]
-T3_PATTERNS = [r"addr_valid", r"l2_pf_master_en"]
+T3_PATTERNS = [r"(^|_)addr_valid$", r"l2_pf_master_en$"]   # not robHeadPaddr_valid
 
 
 def die(msg):
@@ -175,7 +175,7 @@ def monitor_block(sigs, names, allow, where, prefix):
         else:
             cond = "ti_chk_stable && %s !== %s_q_%s" % (n, prefix, n)
             if q:
-                cond += " && !(%s || %s_q_%s)" % (q, prefix, q)
+                cond += " && (%s || %s_q_%s)" % (q, prefix, q)   # compared only while its valid is (was) high
                 what.append("T1 when %s" % q)
             else:
                 what.append("T1")
@@ -262,7 +262,7 @@ def main():
     s.append("  wire ti_alive = alive_r, ti_fe = reset || fe_cnt != 0, ti_reset = reset;")
     s.append("  wire ti_keep_reset = %s;" % (keep_reset if keep_reset else "1'b0"))
     s.append("  wire ti_tlb_req_valid = %s;" % (tlb_valid_in if tlb_valid_in else "1'b0"))
-    off, pf = 0, []
+    off, pf, pfm = 0, [], []   # the prefetch hints (addr_valid: random always, not a TileLink handshake) and l2_pf_master_en
     for w, n in outs:
         r = "rv[%d +: %d]" % (off, w)
         off += w
@@ -274,16 +274,19 @@ def main():
             e = "garb ? %s : alive_r" % r
         elif re.search(r"resetInFrontend$", n):
             e = "garb ? %s : ti_fe" % r
-        elif n.startswith("auto_") and n.endswith("_valid") and "_bits_" not in n:
+        elif n.startswith("auto_") and n.endswith("_valid") and "_bits_" not in n and not re.search(T3_PATTERNS[0], n):
             e = "garb || iso ? %s : 1'b0" % r
         elif n.startswith("auto_") and n.endswith("_ready") and "_bits_" not in n:
             e = "garb || iso ? %s : 1'b1" % r
         else:
             e = r
-        if any(re.search(p, n) for p in T3_PATTERNS):
+        if re.search(T3_PATTERNS[0], n):
             pf.append(n)
+        if re.search(T3_PATTERNS[1], n):
+            pfm.append(n)
         s.append("  assign %s = %s;" % (n, e))
     s.append("  wire ti_pf_out = %s;" % (" || ".join("(|%s)" % n for n in pf) if pf else "1'b0"))
+    s.append("  wire ti_pf_master = %s;" % (" || ".join("(|%s)" % n for n in pfm) if pfm else "1'b0"))
     s.append("endmodule")
     open(os.path.join(out, "stub_XSCore_%s.sv" % cfg), "w").write("\n".join(s) + "\n")
 
