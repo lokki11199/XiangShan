@@ -280,7 +280,7 @@ module cr_l2 #(parameter bit KEEP = 1) (
         if (dir[a_addr] != N && !stale[a_addr] && !(a_op == 3'd6 && a_param == 2'd2 && dir[a_addr] == B) &&
             !(prb_v && prb_sent && prb_addr == a_addr))
           $error("[%0t] L2: Acquire (op %0d grow %0d) of line %0d that the client already holds (%0d): it lost the line?", $time, a_op, a_param, a_addr, dir[a_addr]);
-        if (stale[a_addr]) begin stale[a_addr] <= 1'b0; n_reacq_stale <= n_reacq_stale + 1; end   // served as a hit (DESIGN 7.2 p. 2)
+        if (stale[a_addr]) n_reacq_stale <= n_reacq_stale + 1;   // the entry stays stale until the grant rewrites it (or a ProbeAck NtoN)   // served as a hit (DESIGN 7.2 p. 2)
         acq_v <= 1'b1; acq_perm <= a_op == 3'd7; acq_addr <= a_addr; acq_grow <= a_param; acq_src <= a_src; gnt_send <= 1'b0; gnt_wait_e <= 1'b0;
       end
       // start the grant once no probe is outstanding on that line
@@ -293,7 +293,7 @@ module cr_l2 #(parameter bit KEEP = 1) (
         if (d_isgnt && acq_perm) begin
           // the client gets T without data and overwrites the whole line: L2's copy is no longer valid
           // ("data not valid", TileLink 1.9.3 9.3.2); poison it, the next valid data comes from the client
-          gnt_send <= 1'b0; gnt_wait_e <= 1'b1; dir[acq_addr] <= T; mem[acq_addr] <= 32'hDEAD0000 | acq_addr; n_perm <= n_perm + 1;
+          gnt_send <= 1'b0; gnt_wait_e <= 1'b1; stale[acq_addr] <= 1'b0; dir[acq_addr] <= T; mem[acq_addr] <= 32'hDEAD0000 | acq_addr; n_perm <= n_perm + 1;
           poison[acq_addr] <= 1'b1;
         end else if (d_isgnt) begin
           if (!gnt_beat) begin
@@ -305,7 +305,7 @@ module cr_l2 #(parameter bit KEEP = 1) (
               else n_foreign_grant <= n_foreign_grant + 1;
             end
           end
-          else begin gnt_beat <= 1'b0; gnt_send <= 1'b0; gnt_wait_e <= 1'b1; dir[acq_addr] <= (gnt_cap == 2'd0) ? T : B; end
+          else begin gnt_beat <= 1'b0; gnt_send <= 1'b0; gnt_wait_e <= 1'b1; stale[acq_addr] <= 1'b0; dir[acq_addr] <= (gnt_cap == 2'd0) ? T : B; end
         end else ra_v[ra_sel] <= 1'b0;
       end
       if (e_valid && e_ready) begin

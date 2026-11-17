@@ -362,7 +362,7 @@ module cr_tb;
       for (int w = 0; w < 2; w++)
         if (u_dc.st[i[1:0]][w] != 2'd0 && u_dc.tg[i[1:0]][w] == i[3:2]) begin s = u_dc.st[i[1:0]][w]; d = u_dc.dat[i[1:0]][w]; end
       // dir: 0 N, 1 B, 2 T   dcache: 0 N, 1 B, 2 T, 3 Dirty
-      if (dir_exact && !((dir[i] == 2'd0 && s == 2'd0) || (dir[i] == 2'd1 && s == 2'd1) || (dir[i] == 2'd2 && s >= 2'd2))) begin
+      if (dir_exact && !stale[i] && !((dir[i] == 2'd0 && s == 2'd0) || (dir[i] == 2'd1 && s == 2'd1) || (dir[i] == 2'd2 && s >= 2'd2))) begin
         e_tb++; $display("[%0t] ERROR (%s): line %0d: L2 directory %0d, DCache meta %0d", $time, where, i, dir[i], s);
       end
       if (!gv[i]) n_skipped++;
@@ -382,6 +382,10 @@ module cr_tb;
   // statistics (4.6)
   int n_iso_phases = 0, n_iso_cycles = 0, n_sram_in_iso = 0, n_s18_win = 0, n_s18_pre = 0;
   logic qr_q = 1'b0, blk_win = 1'b0, win_q = 1'b0; wire win_now = blk_win || (quiesce_req && qr_q);
+  // the only thing L2 waits for is the ProbeAck of the gate itself (taken in sRelease, c_ready of L2 slow): it belongs to the
+  // gate, not to the core, and may outlive the sequence (DESIGN 3: ackPending), it is no transaction with the core
+  wire gate_ack_only = u_l2.prb_v && u_l2.prb_sent && g0_ack_pend && !u_l2.acq_v && !u_l2.ra_v[0] && !u_l2.ra_v[1] &&
+                       !u_l2.ra_v[2] && !u_l2.ra_v[3] && !u_l2.ul_v[0] && !u_l2.ul_v[1] && !u_l2.c_beat && !u_l2.ula_beat;
   int n_b2b_direct = 0, n_b2b_gap = 0, n_b2b_probes = 0;
   int n_rd [8];     // req-drop: 0 sIdle-pulse 1 sQuiesce 2 sDrain 3 sIso 4 sReset-early 5 sReset-late 6 sRelease 7 reraise-in-sReset
   always_ff @(posedge clk) if (!sys_rst && lc_v && lc_r && c_gate) n_gate_ack <= n_gate_ack + 1;
@@ -407,6 +411,10 @@ module cr_tb;
       if (!busy || !hart_in_reset) begin e_tb++; $display("[%0t] ERROR S12: busy dropped between two sequences in a row", $time); end
     end
     if (!sys_rst && st_q == S_IDLE && ctl_st == S_QUIESCE && st_qq == S_RELEASE) n_b2b_gap <= n_b2b_gap + 1;
+    // S12 / P25: a request that is high when the core is released starts the next sequence at once (sRelease -> sQuiesce)
+    if (!sys_rst && st_q == S_RELEASE && ctl_st == S_IDLE && req_q) begin
+      e_tb++; $display("[%0t] ERROR S12: the request was high at coreUp but the controller went to sIdle (busy gap)", $time);
+    end
     // S2: in sIso, sReset and sRelease nothing reaches or leaves the core on any channel (the gate's own ProbeAck excepted
     // on the tile side)
     if (!sys_rst && (ctl_st == S_ISO || ctl_st == S_RESET || ctl_st == S_RELEASE) &&
@@ -501,7 +509,7 @@ module cr_tb;
     if (rp_now) begin
       n_rp <= n_rp + 1;
       // S1
-      if (l2_busy) begin e_tb++; $display("[%0t] ERROR S1: L2 has a core transaction outstanding at the reset point", $time); end
+      if (l2_busy && !gate_ack_only) begin e_tb++; $display("[%0t] ERROR S1: L2 has a core transaction outstanding at the reset point (acq_v %0d prb_v %0d sent %0d ra %0d%0d%0d%0d ul %0d%0d cbeat %0d ulabeat %0d st_q %0d st_qq %0d)", $time, u_l2.acq_v, u_l2.prb_v, u_l2.prb_sent, u_l2.ra_v[0], u_l2.ra_v[1], u_l2.ra_v[2], u_l2.ra_v[3], u_l2.ul_v[0], u_l2.ul_v[1], u_l2.c_beat, u_l2.ula_beat, st_q, st_qq); end
       if (!xb_empty || !iso_quiet || u_mgr.v[0] || u_mgr.v[1] || u_mgr.abeat || u_mgr.dbeat) begin
         e_tb++; $display("[%0t] ERROR S1: ICache control request outstanding at the reset point", $time);
       end
@@ -720,8 +728,8 @@ module cr_tb;
         arm_snoop(addr, cap, when_);
         cycles(1);
         req_task = 1;
-        wait_armed_snoop();
-        cycles(2); req_task = 0;
+        if (when_ == 8) begin cycles(2); req_task = 0; wait_armed_snoop(); end   // the trigger is in sRelease: the request must drop first
+        else begin wait_armed_snoop(); cycles(2); req_task = 0; end
       end
     endcase
     // the ProbeAck of this line
@@ -925,14 +933,24 @@ module cr_tb;
   // 5 dropped in sReset after rstCycles, 6 dropped in sRelease, 7 dropped in sReset and raised again before rstCycles.
   // The request is fixed: every case ends with exactly one core reset (7: one extended reset).
   task automatic drop_in(input int where);
-    int n0 = n_resets; int i = 0; logic [2:0] tgt;
+    int n0 = n_resets; int i = 0; int nexp = 1; logic [2:0] tgt;
     traffic_en = 1; snoop_en = 1; cycles($urandom_range(300, 1000));
     if (where == 0) begin
       req_task = 1; @(posedge clk); req_task = 0; n_rd[0]++;
+    end else if (where == 6) begin   // the request is low in sRelease by definition: it is raised and dropped there (held until coreUp)
+      req_task = 1;
+      wait_for("core reset", 20000, in_reset, 1'b1);
+      cycles(RST_CYCLES + $urandom_range(2, 10)); req_task = 0;
+      while (ctl_st != S_RELEASE && i < 3000) begin @(posedge clk); i++; end
+      if (ctl_st == S_RELEASE) begin   // held until the controller leaves sRelease (the request is looked at in the coreUp cycle only: a shorter pulse is lost)
+        n_rd[6]++; req_task = 1; i = 0;
+        while (ctl_st == S_RELEASE && i < 3000) begin @(posedge clk); i++; end
+        req_task = 0; nexp = 2;
+      end
     end else begin
       req_task = 1;
       case (where)
-        1: tgt = S_QUIESCE; 2: tgt = S_DRAIN; 3: tgt = S_ISO; 6: tgt = S_RELEASE; default: tgt = S_RESET;
+        1: tgt = S_QUIESCE; 2: tgt = S_DRAIN; 3: tgt = S_ISO; default: tgt = S_RESET;
       endcase
       while (ctl_st != tgt && i < 30000) begin @(posedge clk); i++; end
       case (where)
@@ -946,7 +964,7 @@ module cr_tb;
       if (where == 7) begin cycles($urandom_range(1, 3)); req_task = 1; n_rd[7]++; cycles(RST_CYCLES + $urandom_range(0, 10)); req_task = 0; end
     end
     wait_for("sequence end", 30000, busy, 1'b0);
-    check_resets(n0);
+    check_resets(n0, nexp);
   endtask
 
   task automatic finish(input bit expect_errors);
