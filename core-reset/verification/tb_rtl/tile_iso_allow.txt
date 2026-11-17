@@ -1,0 +1,3 @@
+# T1 allow list of the tile isolation test (scripts/run_tile_iso.sh): one regex on a port name per line.
+# Every entry must name the DESIGN section that allows the change while the core is isolated.
+core_in_reset$    # DESIGN 2.4: core_in_reset = the reset of XSCore is asserted (sReset only), it changes inside the isolation
