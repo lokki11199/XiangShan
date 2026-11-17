@@ -1,17 +1,12 @@
 design runs: 198, PASS 198
-  FULL           design  90 PASS  90 | naive  3 reproduced  3 | mutant runs 127 caught 125 | +EQUIV  9 PASS  9
-  CFG_KEEP       design  90 PASS  90 | naive  3 reproduced  3 | mutant runs 139 caught 136 | +EQUIV  9 PASS  9
+  FULL           design  90 PASS  90 | naive  3 reproduced  3 | mutant runs 129 caught 129 | +EQUIV  9 PASS  9
+  CFG_KEEP       design  90 PASS  90 | naive  3 reproduced  3 | mutant runs 141 caught 141 | +EQUIV  9 PASS  9
   ISO2           design   6 PASS   6 | naive  0 reproduced  0 | mutant runs   6 caught   6 | +EQUIV  0 PASS  0
   CFG_KEEP+ISO2  design  12 PASS  12 | naive  0 reproduced  0 | mutant runs   6 caught   6 | +EQUIV  0 PASS  0
 naive reset: 6, problem reproduced 6
-mutant runs: 278, caught 273
+mutant runs: 282, caught 282
 +EQUIV runs: 18, PASS 18
 +FORMALONLY runs (NO_REQ_IN_ISO with isoCycles = 1, formal P23): 12, caught in simulation 0
-  NOT CAUGHT CFG=FULL SCEN=2 SEED=1 MUTANT=CTRL_MUTANT_ACK_IN_ISO : final: resets=12 reset-points=12 dcache-ops=972 ul-ops=466 icachectrl-ops=658 probes=292 spurious-probes=51 snoops-served-by-L2-alone=174 acquire
-  NOT CAUGHT CFG=FULL SCEN=2 SEED=2 MUTANT=CTRL_MUTANT_ACK_IN_ISO : final: resets=12 reset-points=12 dcache-ops=1068 ul-ops=474 icachectrl-ops=693 probes=291 spurious-probes=60 snoops-served-by-L2-alone=166 acquir
-  NOT CAUGHT CFG=CFG_KEEP SCEN=2 SEED=1 MUTANT=GATE_MUTANT_NO_HOLDB : final: resets=12 reset-points=12 dcache-ops=1129 ul-ops=477 icachectrl-ops=669 probes=258 spurious-probes=55 snoops-served-by-L2-alone=132 acqu
-  NOT CAUGHT CFG=CFG_KEEP SCEN=2 SEED=2 MUTANT=GATE_MUTANT_NO_HOLDB : final: resets=12 reset-points=12 dcache-ops=1080 ul-ops=468 icachectrl-ops=665 probes=256 spurious-probes=41 snoops-served-by-L2-alone=138 acqu
-  NOT CAUGHT CFG=CFG_KEEP SCEN=2 SEED=3 MUTANT=GATE_MUTANT_NO_HOLDB : final: resets=12 reset-points=12 dcache-ops=973 ul-ops=410 icachectrl-ops=613 probes=227 spurious-probes=52 snoops-served-by-L2-alone=152 acqui
   FORMAL-ONLY (silent in simulation, caught by P23): CFG=FULL SCEN=2 SEED=1 MUTANT=CTRL_MUTANT_NO_REQ_IN_ISO +FORMALONLY : final: resets=12 reset-points=12 dcache-ops=972 ul-ops=466 icachectrl-ops=658 probes=292 s
   FORMAL-ONLY (silent in simulation, caught by P23): CFG=FULL SCEN=5 SEED=1 MUTANT=CTRL_MUTANT_NO_REQ_IN_ISO +FORMALONLY : final: resets=45 reset-points=45 dcache-ops=1525 ul-ops=1051 icachectrl-ops=1648 probes=56
   FORMAL-ONLY (silent in simulation, caught by P23): CFG=FULL SCEN=2 SEED=2 MUTANT=CTRL_MUTANT_NO_REQ_IN_ISO +FORMALONLY : final: resets=12 reset-points=12 dcache-ops=1068 ul-ops=474 icachectrl-ops=693 probes=291 
