@@ -21,11 +21,12 @@
 # Runs are sequential: the Verilator build of one configuration must never be made by two processes at once.
 cd "$(dirname "$0")/.."
 RARE=scripts/rare_seeds.txt
-EQ=""   # set to "+EQUIV" for the expected-equivalent mutants
+EQ=""   # set to "+EQUIV" for the expected-equivalent mutants (frozen list, TESTPLAN 4.7); "+FORMALONLY": a mutant that is
+        # silent in simulation but proved by a formal property (listed by regress_summary.py, not counted as a hole of the frozen list)
 cfgname() { case "$1" in "") echo FULL;; *) echo "$1";; esac; }
 run() {  # CFG SCEN SEED [DEFINES] [PLUSARGS]
   local N; N=$(cfgname "$1"); local D=$1${4:+${1:++}$4}
-  local K="CFG=$N SCEN=$2 SEED=$3 ${5:+$5 }${4:+MUTANT=$4 }${EQ:+$EQ }:"
+  local K="CFG=$N SCEN=$2 SEED=$3 ${5:+$5 }${4:+MUTANT=$4 }${EQ:+$EQ }${FO:+$FO }:"
   if [ -n "$RESUME" ] && [ -f "$RESUME" ] && grep -qF -- "$K" "$RESUME"; then grep -F -- "$K" "$RESUME" | head -1; return; fi
   local R rc
   R=$(timeout 600 scripts/run.sh $2 $3 "$D" $5 2>&1); rc=$?
@@ -75,17 +76,19 @@ for C in "" CFG_KEEP; do
   mut "$C" CTRL_MUTANT_NO_EARLY_BLOCK "2 5"
   mut "$C" CTRL_MUTANT_NO_EARLY_QUIET "2 5"
   mut "$C" CTRL_MUTANT_RESET_EARLY "3 7"
-  mut "$C" CTRL_MUTANT_NO_REQ_IN_ISO "2 5"
+  # NO_REQ_IN_ISO: with isoCycles = 1 the DCache block drops a cycle after l1.req, that is in sReset: invisible in simulation,
+  # caught by P23 (formal); the ISO2 configurations below see it (S18)
+  FO="+FORMALONLY"; mut "$C" CTRL_MUTANT_NO_REQ_IN_ISO "2 5"; FO=""
   mut "$C" CTRL_MUTANT_LATE_HART_IN_RESET 1
   mut "$C" CTRL_MUTANT_BUSY_GAP 8
   mut "$C" CTRL_MUTANT_IN_RESET_WIDE 1
-  mut "$C" QUIESCE_MUTANT_NO_MQ_WAIT 5
   # rare in simulation: these seeds hit them (scripts/seedsearch.sh)
   rare "$C" GATE_MUTANT_CUT_A+NO_CTRL_ASSERT
   rare "$C" QUIESCE_MUTANT_NO_WBQ_WAIT+NO_CTRL_ASSERT
   rare "$C" QUIESCE_MUTANT_NO_BLOCK
   rare "$C" QUIESCE_MUTANT_NO_BLOCK+NO_CTRL_ASSERT
   rare "$C" QUIESCE_MUTANT_NO_MP_WAIT
+  rare "$C" QUIESCE_MUTANT_NO_MQ_WAIT
   # expected equivalent (frozen list, TESTPLAN 4.7): the DCache idle flag is redundant with done + the gates' quiet;
   # NO_ALIVE: in XSTile the frontend is the last of the ResetGen chain, after the DCache, so waiting for the frontend
   # also covers alive (the formal proof catches it: its environment allows any order)
@@ -102,3 +105,5 @@ for M in TAG_MUTANT_CORE_RESET FREEZE_MUTANT_NO_SRAM_MASK FREEZE_MUTANT_NO_READ_
 # isoCycles = 2: the isolation must last two cycles
 mut CFG_KEEP+ISO2 CTRL_MUTANT_ISO_SHORT 2
 mut ISO2 CTRL_MUTANT_ISO_SHORT 2
+mut CFG_KEEP+ISO2 CTRL_MUTANT_NO_REQ_IN_ISO 2
+mut ISO2 CTRL_MUTANT_NO_REQ_IN_ISO 2

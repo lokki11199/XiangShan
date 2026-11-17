@@ -386,6 +386,7 @@ module cr_tb;
   // gate, not to the core, and may outlive the sequence (DESIGN 3: ackPending), it is no transaction with the core
   wire gate_ack_only = u_l2.prb_v && u_l2.prb_sent && g0_ack_pend && !u_l2.acq_v && !u_l2.ra_v[0] && !u_l2.ra_v[1] &&
                        !u_l2.ra_v[2] && !u_l2.ra_v[3] && !u_l2.ul_v[0] && !u_l2.ul_v[1] && !u_l2.c_beat && !u_l2.ula_beat;
+  logic after_rel = 1'b0; int idle_len = 0;
   int n_b2b_direct = 0, n_b2b_gap = 0, n_b2b_probes = 0;
   int n_rd [8];     // req-drop: 0 sIdle-pulse 1 sQuiesce 2 sDrain 3 sIso 4 sReset-early 5 sReset-late 6 sRelease 7 reraise-in-sReset
   always_ff @(posedge clk) if (!sys_rst && lc_v && lc_r && c_gate) n_gate_ack <= n_gate_ack + 1;
@@ -410,7 +411,13 @@ module cr_tb;
       n_b2b_direct <= n_b2b_direct + 1;
       if (!busy || !hart_in_reset) begin e_tb++; $display("[%0t] ERROR S12: busy dropped between two sequences in a row", $time); end
     end
-    if (!sys_rst && st_q == S_IDLE && ctl_st == S_QUIESCE && st_qq == S_RELEASE) n_b2b_gap <= n_b2b_gap + 1;
+    // gap: the next sequence starts within 4 cycles of the end of the previous one (sRelease -> sIdle -> sQuiesce: busy dropped)
+    if (ctl_st == S_IDLE) idle_len <= (st_q == S_IDLE) ? idle_len + 1 : 1;
+    if (st_q == S_RELEASE && ctl_st == S_IDLE) after_rel <= 1'b1;
+    if (!sys_rst && st_q == S_IDLE && ctl_st == S_QUIESCE) begin
+      if (after_rel && idle_len <= 4) n_b2b_gap <= n_b2b_gap + 1;
+      after_rel <= 1'b0;
+    end
     // S12 / P25: a request that is high when the core is released starts the next sequence at once (sRelease -> sQuiesce)
     if (!sys_rst && st_q == S_RELEASE && ctl_st == S_IDLE && req_q) begin
       e_tb++; $display("[%0t] ERROR S12: the request was high at coreUp but the controller went to sIdle (busy gap)", $time);
