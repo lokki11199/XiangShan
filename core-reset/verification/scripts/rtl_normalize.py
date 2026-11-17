@@ -79,8 +79,10 @@ def manifest(rtl_dir):
 
 
 def read_manifest(path, section=None):
-    """{relative path: sha256} from a manifest, or from a file with [section] headers (elab/ident_ref_*.txt)."""
-    res = {}
+    """{relative path: sha256} from a manifest, or from a file with [section] headers (elab/ident_ref_*.txt).
+    A file without any [section] header is a plain manifest: all of it is returned whatever section is asked for
+    (so a fresh manifest can be compared with one section of the reference file)."""
+    every, by_sec = {}, {}
     cur = None
     with open(path) as f:
         for ln in f:
@@ -88,12 +90,14 @@ def read_manifest(path, section=None):
             if h:
                 cur = h.group(1)
                 continue
-            if section is not None and cur != section:
-                continue
             m = re.match(r"^([0-9a-f]{64})  (\S.*)$", ln.rstrip("\n"))
             if m:
-                res[m.group(2)] = m.group(1)
-    return res
+                every[m.group(2)] = m.group(1)
+                if cur is not None:
+                    by_sec.setdefault(cur, {})[m.group(2)] = m.group(1)
+    if section is None or not by_sec:
+        return every
+    return by_sec.get(section, {})
 
 
 def diff(a_path, b_path, sec_a=None, sec_b=None):
