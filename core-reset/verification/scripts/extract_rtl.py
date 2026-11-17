@@ -4,8 +4,9 @@
 usage: extract_rtl.py <elab_outdir> [rtl_dir]      (rtl_dir default: ../rtl relative to this script)
 
 Writes into rtl_dir:
-  CoreResetCtrl_keep.sv   CoreResetCtrl (keepL1 = true),   module renamed CoreResetCtrl_keep
-  CoreResetCtrl_sweep.sv  CoreResetCtrl (keepL1 = false),  module renamed CoreResetCtrl_sweep
+  CoreResetCtrl_{full,keep,full_iso2,keep_iso2}.sv   CoreResetCtrl (keepL1 false / true, isoCycles 1 / 2),
+                          module renamed to the file name
+  DCacheQuiesceUnit.sv    the drain unit of the DCache (elaborated alone, quiesce/)
   TLQuiesceGate.sv, TLQuiesceGate_1.sv, TLResetIsolation.sv  (cut out of gates/CoreResetGatesHarness.sv)
   TLMonitor_stubs.sv      port-only stubs, only if the cut modules instantiate a TLMonitor*
 Every file starts with the firtool macro preamble (everything before the first `module`).
@@ -72,10 +73,16 @@ def main():
     rtl = sys.argv[2] if len(sys.argv) > 2 else os.path.join(here, "..", "rtl")
     os.makedirs(rtl, exist_ok=True)
 
-    for cfg, sub in (("keep", "ctrl_keep"), ("sweep", "ctrl_sweep")):
-        pre, mods = split_modules(read(os.path.join(elab, sub, "CoreResetCtrl.sv")))
+    for cfg in ("full", "keep", "full_iso2", "keep_iso2"):
+        pre, mods = split_modules(read(os.path.join(elab, "ctrl_" + cfg, "CoreResetCtrl.sv")))
         body = re.sub(r'^module\s+CoreResetCtrl\b', "module CoreResetCtrl_" + cfg, mods["CoreResetCtrl"], count=1, flags=re.M)
         write(os.path.join(rtl, "CoreResetCtrl_%s.sv" % cfg), pre + body)
+
+    # DCacheQuiesceUnit: the module of the same name (the target holds nothing else but it, and perhaps XSPerf helpers)
+    pre, mods = split_modules(read(os.path.join(elab, "quiesce", "DCacheQuiesceUnit.sv")))
+    if "DCacheQuiesceUnit" not in mods:
+        raise SystemExit("module DCacheQuiesceUnit not found in quiesce/")
+    write(os.path.join(rtl, "DCacheQuiesceUnit.sv"), pre + mods["DCacheQuiesceUnit"])
 
     pre, mods = split_modules(read(os.path.join(elab, "gates", "CoreResetGatesHarness.sv")))
     stubs = {}

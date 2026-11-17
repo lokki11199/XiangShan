@@ -1,14 +1,18 @@
 /***************************************************************************************
 * Elaboration harness for the core-only reset (verification only, not part of the patch).
-* Copy into src/main/scala/xiangshan/ and run:
-*   mill -i xiangshan.runMain xiangshan.CoreResetElab <outdir> [ctrl_full,ctrl_keep,gates]
-* Targets (each into its own directory <outdir>/<target>):
-*   ctrl_full  : CoreResetCtrl(keepL1 = false)  (FULL, default)
-*   ctrl_keep  : CoreResetCtrl(keepL1 = true)   (KEEP)
+* Copy elab/*.scala into src/main/scala/xiangshan/ (CoreResetDCacheHarness.scala, CoreResetIdentElab.scala and
+* this file; the three compile together) and run, one target per JVM when the target holds SRAMs:
+*   mill -i xiangshan.runMain xiangshan.CoreResetElab <outdir> [ctrl_full,ctrl_keep,...]
+* Targets (each into its own directory <outdir>/<target>), TESTPLAN section 3.1:
+*   ctrl_full, ctrl_keep, ctrl_full_iso2, ctrl_keep_iso2 : CoreResetCtrl(keepL1, isoCycles = 1 | 2)
 *   gates      : a TL-C client -> TLQuiesceGate("l1d", early = false) -> manager,
 *                a TL-UL client -> TLQuiesceGate("l1i", early = true) -> manager,
 *                a TL-UL client -> TLResetIsolation -> manager (asynchronous reset, as in XSTile)
-* The RTL of these modules is compared with the SystemVerilog models (verification/formal/eq_chisel.sv).
+*   quiesce    : DCacheQuiesceUnit (Parameters of XSNoCTopConfig with EnableCoreReset)
+*   dcache_full, dcache_keep : the RTL test bench of the DCache (CoreResetDCacheHarness.scala); only one per JVM
+*   ident_dcache             : the bench of the identity check (CoreResetIdentElab.scala)
+* The RTL of ctrl / gates / quiesce is cut by scripts/extract_rtl.py into rtl/ and compared with the models
+* (formal/eq_chisel.sv, formal/run_equiv.sh).
 * mill packs three binaries of the ready-to-run submodule as resources; when the submodule is not checked out,
 * empty files ready-to-run/riscv64-{nemu-interpreter-dual,nemu-interpreter,spike}-so are enough for elaboration.
 ***************************************************************************************/
@@ -16,6 +20,7 @@
 package xiangshan
 
 import chisel3._
+import utility.Constantin
 import circt.stage.ChiselStage
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy._
@@ -78,22 +83,44 @@ class CoreResetGatesHarness(implicit p: Parameters) extends LazyModule {
   }
 }
 
-object CoreResetElab extends App {
-  val outDir = args.headOption.getOrElse("build/core_reset_elab")
-  val targets = if (args.length > 1) args(1).split(",").toSeq else Seq("ctrl_full", "ctrl_keep", "gates")
-  val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
+object CoreResetElab {
+  private val firtoolOpts = Array("-O=release", "--disable-annotation-unknown",
     "--lowering-options=explicitBitcast,disallowLocalVariables,disallowPortDeclSharing,locationInfoStyle=none")
-  // a configuration only for the Parameters the TileLink nodes need
-  val (config, _, _) = top.ArgParser.parse(Array("--config", "MinimalConfig", "--num-cores", "1"))
+  private val all = Seq("ctrl_full", "ctrl_keep", "ctrl_full_iso2", "ctrl_keep_iso2", "gates", "quiesce")
 
-  targets.foreach {
-    case "ctrl_full" =>
-      ChiselStage.emitSystemVerilogFile(new CoreResetCtrl(keepL1 = false), Array("--target-dir", s"$outDir/ctrl_full"), firtoolOpts)
-    case "ctrl_keep" =>
-      ChiselStage.emitSystemVerilogFile(new CoreResetCtrl(keepL1 = true), Array("--target-dir", s"$outDir/ctrl_keep"), firtoolOpts)
-    case "gates" =>
-      val h = DisableMonitors(p => LazyModule(new CoreResetGatesHarness()(p)))(config)
-      ChiselStage.emitSystemVerilogFile(h.module, Array("--target-dir", s"$outDir/gates"), firtoolOpts)
-    case t => println(s"CoreResetElab: unknown target $t")
+  /** Parameters of XSNoCTopConfig with the core reset enabled (for DCacheQuiesceUnit). */
+  private def coreResetParams(keep: Boolean): Parameters = {
+    val (c, _, _) = top.ArgParser.parse(Array("--config", "XSNoCTopConfig", "--fpga-platform", "--dfx", "false"))
+    c.alter((site, here, up) => {
+      case system.SoCParamsKey => up(system.SoCParamsKey).copy(EnableCoreReset = true, CoreResetKeepL1 = keep)
+      case XSCoreParamsKey => up(XSTileKey).head
+    })
+  }
+
+  def main(args: Array[String]): Unit = {
+    val outDir = args.headOption.getOrElse("build/core_reset_elab")
+    val targets = if (args.length > 1) args(1).split(",").toSeq else all
+    // a configuration only for the Parameters the TileLink nodes of the gates need
+    lazy val (config, _, _) = top.ArgParser.parse(Array("--config", "MinimalConfig", "--num-cores", "1"))
+    def ctrl(name: String, keep: Boolean, iso: Int): Unit =
+      ChiselStage.emitSystemVerilogFile(new CoreResetCtrl(keepL1 = keep, isoCycles = iso),
+        Array("--target-dir", s"$outDir/$name"), firtoolOpts)
+    targets.foreach {
+      case "ctrl_full"      => ctrl("ctrl_full", keep = false, iso = 1)
+      case "ctrl_keep"      => ctrl("ctrl_keep", keep = true, iso = 1)
+      case "ctrl_full_iso2" => ctrl("ctrl_full_iso2", keep = false, iso = 2)
+      case "ctrl_keep_iso2" => ctrl("ctrl_keep_iso2", keep = true, iso = 2)
+      case "gates" =>
+        val h = DisableMonitors(p => LazyModule(new CoreResetGatesHarness()(p)))(config)
+        ChiselStage.emitSystemVerilogFile(h.module, Array("--target-dir", s"$outDir/gates"), firtoolOpts)
+      case "quiesce" =>
+        Constantin.init(false)
+        ChiselStage.emitSystemVerilogFile(new xiangshan.cache.DCacheQuiesceUnit()(coreResetParams(false)),
+          Array("--target-dir", s"$outDir/quiesce"), firtoolOpts)
+      case "dcache_full" => CoreResetDCacheElab.emit(s"$outDir/dcache_full", keep = false)
+      case "dcache_keep" => CoreResetDCacheElab.emit(s"$outDir/dcache_keep", keep = true)
+      case "ident_dcache" => CoreResetIdentElab.emit(s"$outDir/ident_dcache")
+      case t => println(s"CoreResetElab: unknown target $t")
+    }
   }
 }
