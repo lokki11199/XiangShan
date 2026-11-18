@@ -289,17 +289,22 @@
   endtask
 
   // ------------------------------------------------------------------ K8: the state after a sequence
+  // KEEP: a Probe held during the sequence reaches L1D after it and may legally take the line away (ProbeAck
+  // TtoN with the data, checked against gold): the lines L1D must still hold are those the directory lists once
+  // the held Probes are answered, not those of the reset point. FULL: the reset point (stale directory).
   task automatic verify_after();
-    bit hit, ok; int nacq0;
+    bit hit, ok; int nacq0, t; logic [1:0] d;
     tick(8);
     pm_mode = PG_NOW;
     if (!snap_valid) begin fail("K8", "no reset point was seen in the sequence"); return; end
+    for (t = 0; t < 600 && !(l2_quiet && !l2io_0_b_valid); t++) @(posedge clk);
     for (int l = 0; l < NL; l++) begin
-      if (touched[l] && snap_dir[l] != 2'd0) begin
+      d = IS_KEEP ? dir_o[l*2 +: 2] : snap_dir[l];
+      if (touched[l] && d != 2'd0) begin
         if (IS_KEEP) begin
           do_ld(l, 0, hit, ok);
-          if (ok && !hit) fail("K8", $sformatf("KEEP: line %0d (directory %0d) is not in L1D after the reset", l, snap_dir[l]));
-          if (snap_dir[l] == 2'd2 && l % 2 == 0) begin
+          if (ok && !hit) fail("K8", $sformatf("KEEP: line %0d (directory %0d) is not in L1D after the reset", l, d));
+          if (d == 2'd2 && l % 2 == 0) begin
             nacq0 = l2_n_acq;
             do_store(l, 0, ok);
             if (ok && l2_n_acq != nacq0) fail("K8", $sformatf("KEEP: a store to the T line %0d needed an Acquire", l));
