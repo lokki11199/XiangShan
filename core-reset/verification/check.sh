@@ -282,7 +282,8 @@ noc_one() {  # noc_one CFG: elaboration + structural check; appends the lines of
   rm -rf "$B"
   [ "$cfg" != off ] && yml="YAML_CONFIG=core-reset/verification/elab/xsnoctop_$cfg.yml"
   t0=$(date +%s)
-  make verilog CONFIG=XSNoCTopConfig $yml BUILD_DIR=./build/noc_$cfg JVM_XMX=${JVM_XMX:-7G}
+  # TIME_CMD= : the Makefile wraps mill in GNU `time -avp`, which a container may lack
+  make verilog CONFIG=XSNoCTopConfig $yml BUILD_DIR=./build/noc_$cfg JVM_XMX=${JVM_XMX:-7G} TIME_CMD=
   rc=$?
   if [ $rc -ne 0 ] && [ -f "$B/rtl/XSTop.fir" ]; then
     echo "make failed (rc $rc), XSTop.fir exists: rerun firtool alone"

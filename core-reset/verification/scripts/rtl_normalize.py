@@ -11,7 +11,8 @@ What is hashed per file (*.sv, *.v, *.svh, *.conf; not *.fir, *.anno.json, filel
      as comments to XSTop.sv, CIRCT writes a header;
   2. `Name.scala:12` and `Name.scala:12:3` become `Name.scala:N` (assert and printf messages);
   3. in CommitIDModule*.sv and PrintCommitIDModule*.sv every sized hex literal becomes <CONST> (the commit SHA and
-     the dirty flag of the build are in there);
+     the dirty flag of the build are in there); in every file the values of the wires gitCommitSHA and gitDirty
+     (NewCSR keeps both, NewCSR.scala:317-320) become <CONST> as well;
   4. empty lines and trailing blanks are dropped.
 Manifest: one line `sha256  relative/path` per file in sorted order, last line `TOTAL <sha256 of the lines above>
 files=N`. The RTL itself is not stored; two manifests are compared by TOTAL, and by lines when TOTAL differs.
@@ -24,6 +25,9 @@ import sys
 EXTS = (".sv", ".v", ".svh", ".conf")
 SCALA_LOC = re.compile(r"([A-Za-z0-9_]+\.scala):\d+(?::\d+)?")
 HEX_LIT = re.compile(r"\d+'h[0-9a-fA-F_]+")
+# NewCSR keeps the commit SHA and the dirty flag of the build as wires (NewCSR.scala:317-320, dontTouch):
+# `wire [39:0] gitCommitSHA = 40'h...;`, `wire gitDirty = 1'h0;`
+GIT_WIRE = re.compile(r"\b(gitCommitSHA|gitDirty)(\s*=\s*)\d+'h[0-9a-fA-F_]+")
 
 
 def strip_comments(text):
@@ -58,6 +62,7 @@ def normalise(path, text):
     base = os.path.basename(path)
     if base.startswith("CommitIDModule") or base.startswith("PrintCommitIDModule"):
         text = HEX_LIT.sub("<CONST>", text)
+    text = GIT_WIRE.sub(r"\1\2<CONST>", text)
     lines = [ln.rstrip() for ln in text.splitlines()]
     return "\n".join(ln for ln in lines if ln) + "\n"
 

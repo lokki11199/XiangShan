@@ -89,7 +89,8 @@ reference)
   cd "$REF"
   rm -rf build/noc_ref
   for try in 1 2 3; do
-    make verilog CONFIG=XSNoCTopConfig BUILD_DIR=./build/noc_ref JVM_XMX=${JVM_XMX:-7G} 2>&1 | tee build/noc_ref.log
+    # TIME_CMD= : the Makefile wraps mill in GNU `time -avp`, which a container may lack
+    make verilog CONFIG=XSNoCTopConfig BUILD_DIR=./build/noc_ref JVM_XMX=${JVM_XMX:-7G} TIME_CMD= 2>&1 | tee build/noc_ref.log
     rc=${PIPESTATUS[0]}
     [ $rc -eq 0 ] && break
     if [ -f build/noc_ref/rtl/XSTop.fir ]; then
