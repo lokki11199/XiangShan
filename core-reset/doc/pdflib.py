@@ -76,7 +76,7 @@ def _amp(s):
 
 
 def mk(text):
-    """Inline markup: `code` -> dark-red monospace; [TL 1.8.1 ...] blue, [TL 1.9.3 ...] green; <b>, <i>, <br/> pass
+    """Inline markup: `code` -> dark-red monospace; [@section] (TileLink 1.9.3) green; <b>, <i>, <br/> pass
     through. A bare < or & must be written as &lt; / &amp;."""
     parts = text.split('`')
     out = []
@@ -87,10 +87,9 @@ def mk(text):
         else:
             p = _amp(p)
 
-            def tl(m):
-                col = TL181 if m.group(1) == '1.8.1' else TL193
-                return '<font color="%s">%s</font>' % (col, m.group(0))
-            p = re.sub(r'\[TL (1\.8\.1|1\.9\.3)[^\]]*\]', tl, p)
+            # TileLink references: [@3.2.2] (and the v4 spellings [TL 1.8.1 x.y, с. N]) -> green [@x.y]
+            p = re.sub(r'\[TL 1\.(?:8\.1|9\.3) ([0-9.]+)[^\]]*\]', lambda m: '[@%s]' % m.group(1), p)
+            p = re.sub(r'\[@[^\]]*\]', lambda m: '<font color="%s">%s</font>' % (TL193, m.group(0)), p)
             out.append(p)
     return ''.join(out)
 

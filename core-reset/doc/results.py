@@ -20,50 +20,60 @@ def _read(name):
 
 
 # ---------------------------------------------------------------- formal
-def formal(cfg):
-    """results_formal_<k|s>.txt (formal/run_formal.sh): prove 100 / 16 with the time, bmc, covers, mutants."""
-    txt = _read('results_formal_%s.txt' % cfg)
+def formal(name):
+    """results_formal_<f|k>.txt (formal/run_formal.sh): sections "=== configuration X": prove 100 / 16, covers, mutants.
+    Returns {'main': sec, 'iso2': sec, 'tools': str, 'final': int} (sec: prove {(rst, iso): (res, sec)}, cover,
+    covers, mutants [(name, res, cycle, props, engine)], equiv [(name, res)]). Also 'adapters' (results_formal_adapters)."""
+    txt = _read('results_formal_%s.txt' % name)
     if txt is None:
         return None
-    r = {'prove': {}, 'bmc': None, 'cover': None, 'covers': [], 'mutants': [], 'equiv': [], 'final': None,
-         'tools': None}
+
+    def newsec():
+        return {'prove': {}, 'cover': None, 'covers': [], 'mutants': [], 'equiv': [], 'title': ''}
+    r = {'main': newsec(), 'iso2': newsec(), 'final': None, 'tools': None, 'bmc_note': False}
+    cur = r['main']
     for line in txt.splitlines():
-        m = re.match(r'design prove rstCycles=(\d+) .*?: (\w+)\s+\(([\d.]+) sec\)', line)
+        m = re.match(r'=== configuration (\w+): (.*)', line)
         if m:
-            r['prove'][int(m.group(1))] = (m.group(2), float(m.group(3)))
+            cur = r['iso2'] if m.group(1) in ('f2', 'k2') else r['main']
+            cur['title'] = m.group(2)
             continue
-        m = re.match(r'design\s+bmc: not run', line)
+        m = re.match(r'(?:design|adapters) prove(?: rstCycles=(\d+))?(?: isoCycles=(\d+))? \(.*?\): (\w+)\s+\(([\d.]+) sec\)', line)
         if m:
-            r['bmc'] = 'not run'
+            cur['prove'][(int(m.group(1) or 0), int(m.group(2) or 1))] = (m.group(3), float(m.group(4)))
             continue
-        m = re.match(r'design\s+bmc (\d+): (\w+) \(assumptions satisfiable: (\w+)\)', line)
-        if m:
-            r['bmc'] = (int(m.group(1)), m.group(2), m.group(3))
+        if re.match(r'design\s+bmc: not run', line):
+            r['bmc_note'] = True
             continue
         m = re.match(r'design\s+cover[^:]*: (\w+) \((\d+) reached: (.*)\)', line)
         if m:
-            r['cover'] = (m.group(1), int(m.group(2)))
-            r['covers'] = [(a, int(b)) for a, b in re.findall(r'(C\d+) step (\d+)', m.group(3))]
+            cur['cover'] = (m.group(1), int(m.group(2)))
+            cur['covers'] = [(a, int(b)) for a, b in re.findall(r'(C\d+) step (\d+)', m.group(3))]
             continue
-        m = re.match(r'(\w+)\s+bmc : (\w+) at cycle (\d+)\s*(.*)', line)
+        m = re.match(r'(\w+)\s+(?:adapters )?bmc : (\w+) at cycle (\d+)\s*(.*)', line)
         if m:
-            r['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split(), 'bmc'))
+            cur['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split(), 'bmc'))
             continue
         m = re.match(r'(\w+)\s+bmc \d+ clean or >\d+s, \(pdr\): (\w+) at cycle (\d+)\s*(.*)', line)
         if m:
-            r['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split(), 'pdr'))
+            cur['mutants'].append((m.group(1), m.group(2), int(m.group(3)), m.group(4).split(), 'pdr'))
             continue
         m = re.match(r'(\w+)\s+prove: (\w+) \(equivalent', line)
         if m:
-            r['equiv'].append((m.group(1), m.group(2)))
+            cur['equiv'].append((m.group(1), m.group(2)))
             continue
-        m = re.match(r'formal: (\d+) unexpected', line)
+        m = re.match(r'(?:formal|adapters): (\d+) unexpected', line)
         if m:
             r['final'] = int(m.group(1))
             continue
         if line.startswith('tools:'):
             r['tools'] = line[6:].strip()
     return r
+
+
+def adapters():
+    r = formal('adapters')
+    return r['main'] if r else None
 
 
 def equiv():
@@ -80,6 +90,9 @@ def equiv():
 
 
 # ---------------------------------------------------------------- regression
+CFGS = ['FULL', 'CFG_KEEP', 'ISO2', 'CFG_KEEP+ISO2']
+
+
 def regress():
     """results_regress.txt: the same classification as scripts/regress_summary.py."""
     txt = _read('results_regress.txt')
@@ -89,9 +102,10 @@ def regress():
     skipped = [l for l in lines if ': SKIPPED' in l]
     lines = [l for l in lines if l not in skipped]
     equiv_ = [l for l in lines if ' +EQUIV ' in l]
-    mut = [l for l in lines if 'MUTANT' in l and l not in equiv_]
+    fonly = [l for l in lines if ' +FORMALONLY ' in l]
+    mut = [l for l in lines if 'MUTANT' in l and l not in equiv_ and l not in fonly]
     naive = [l for l in lines if ' SCEN=4 ' in l]
-    good = [l for l in lines if l not in equiv_ and l not in mut and l not in naive]
+    good = [l for l in lines if l not in equiv_ and l not in mut and l not in naive and l not in fonly]
 
     def caught(l):
         return 'ERROR' in l or '%Error' in l or 'TIMEOUT' in l or 'RESULT: FAIL' in l
@@ -104,8 +118,9 @@ def regress():
 
     cfg = lambda l: l.split()[0][4:]
     scen = lambda l: int(re.search(r'SCEN=(\d+)', l).group(1))
-    res = {'cfg': {}, 'mut': {}, 'equiv': {}, 'skipped': len(skipped), 'total': len(lines)}
-    for c in ['KEEP', 'CFG_SWEEP']:
+    res = {'cfg': {}, 'mut': {}, 'equiv': {}, 'skipped': len(skipped), 'total': len(lines),
+           'fonly': len(fonly), 'fonly_caught': sum(caught(l) for l in fonly)}
+    for c in CFGS:
         f = lambda L: [l for l in L if cfg(l) == c]
         res['cfg'][c] = {
             'design': len(f(good)), 'design_pass': sum(passed(l) for l in f(good)),
@@ -113,7 +128,6 @@ def regress():
             'mut': len(f(mut)), 'mut_caught': sum(caught(l) for l in f(mut)),
             'eq': len(f(equiv_)), 'eq_pass': sum(passed(l) for l in f(equiv_)),
         }
-        # design runs per scenario
         sc = {}
         for l in f(good):
             k = (scen(l), '+SLOW' in l)
@@ -121,7 +135,7 @@ def regress():
             a[0] += 1
             a[1] += passed(l)
         res['cfg'][c]['by_scen'] = sc
-    for l in mut + equiv_:
+    for l in mut + equiv_ + fonly:
         m = re.search(r'MUTANT=(\S+)', l)
         name = m.group(1)
         tgt = res['equiv'] if l in equiv_ else res['mut']
@@ -139,7 +153,7 @@ def regress():
 
 # ---------------------------------------------------------------- soak and coverage
 def soak(cfg):
-    """results_soak_<KEEP|CFG_SWEEP>.log -> (runs, passed)"""
+    """results_soak_<FULL|CFG_KEEP>.log -> (runs, passed)"""
     txt = _read('results_soak_%s.log' % cfg)
     if txt is None:
         return None
@@ -191,3 +205,42 @@ def verilator_version():
         return out
     except Exception:
         return None
+
+
+def rtl_dcache():
+    """results_rtl_dcache.txt (scripts/run_rtl_dcache.sh): "RTL CFG=.. CASE=.. SEED=.. CTRL=.. : RESULT: PASS|FAIL ..."
+    and the summary line "rtl_dcache: runs=N pass=N fail=N mutant-runs=M caught=M". None if there is no file."""
+    txt = _read('results_rtl_dcache.txt')
+    if txt is None:
+        return None
+    rows = []
+    for l in txt.splitlines():
+        m = re.match(r'RTL CFG=(\S+) CASE=(\S+) SEED=(\d+) CTRL=(\S+) : RESULT: (\w+)(.*)', l)
+        if m:
+            rows.append({'cfg': m.group(1), 'case': m.group(2), 'seed': int(m.group(3)), 'ctrl': m.group(4),
+                         'res': m.group(5), 'rest': m.group(6).strip()})
+    summ = None
+    m = re.search(r'rtl_dcache: runs=(\d+) pass=(\d+) fail=(\d+) mutant-runs=(\d+) caught=(\d+)', txt)
+    if m:
+        summ = tuple(int(x) for x in m.groups())
+    return {'rows': rows, 'summary': summ, 'raw': txt}
+
+
+def tile_iso():
+    txt = _read('results_tile_iso.txt')
+    if txt is None:
+        return None
+    rows = []
+    for l in txt.splitlines():
+        m = re.match(r'TILE CFG=(\w+)(?: MUTANT=(\w+))? : (.*)', l)
+        if m:
+            rows.append((m.group(1), m.group(2), m.group(3)))
+    return {'rows': rows, 'raw': txt, 'unexpected': (re.search(r'tile_iso: (\d+) unexpected', txt) or [None, None])[1]}
+
+
+def ident():
+    """identity of RTL with EnableCoreReset=false against 7b16188: lines of results_elab.txt"""
+    txt = _read('results_elab.txt')
+    if txt is None:
+        return None
+    return [l for l in txt.splitlines() if l.startswith(('identity', 'reference'))]
