@@ -70,6 +70,7 @@ def table(P):
     o("l2io_0_a_valid"); i("l2io_0_a_ready")
     o("l2io_0_a_bits_opcode", 4); o("l2io_0_a_bits_param", 3); o("l2io_0_a_bits_size", sz); o("l2io_0_a_bits_source", src)
     o("l2io_0_a_bits_address", ad); o("l2io_0_a_bits_mask", mw); o("l2io_0_a_bits_data", dw); o("l2io_0_a_bits_corrupt")
+    o("l2io_0_a_bits_echo_isKeyword")
     i("l2io_0_b_valid"); o("l2io_0_b_ready")
     i("l2io_0_b_bits_opcode", 3); i("l2io_0_b_bits_param", 2); i("l2io_0_b_bits_size", sz); i("l2io_0_b_bits_source", src)
     i("l2io_0_b_bits_address", ad); i("l2io_0_b_bits_mask", mw); i("l2io_0_b_bits_data", dw); i("l2io_0_b_bits_corrupt")
@@ -79,6 +80,7 @@ def table(P):
     i("l2io_0_d_valid"); o("l2io_0_d_ready")
     i("l2io_0_d_bits_opcode", 4); i("l2io_0_d_bits_param", 2); i("l2io_0_d_bits_size", sz); i("l2io_0_d_bits_source", src)
     i("l2io_0_d_bits_sink", snk); i("l2io_0_d_bits_denied"); i("l2io_0_d_bits_data", dw); i("l2io_0_d_bits_corrupt")
+    i("l2io_0_d_bits_echo_isKeyword")
     o("l2io_0_e_valid"); i("l2io_0_e_ready"); o("l2io_0_e_bits_sink", snk)
     return L
 
@@ -137,7 +139,7 @@ def check(P, rtl_dir):
     known = {n for n, _, _ in table(P)} | {"clock", "reset"}
     extra = sorted(n for n in have if n not in known)
     # user / echo fields of the TL channels are left unconnected by the stand on purpose
-    extra_other = [n for n in extra if not re.match(r"l2io_0_[a-e]_bits_(user|echo)_", n)]
+    extra_other = [n for n in extra if not re.match(r"l2io_0_[a-e]_bits_(user|echo)_", n)]   # the others are not used
     if extra_other:
         print("note: ports of the RTL that the stand does not use: " + ", ".join(extra_other))
     print("check %s: %s (%d ports in the table)" % (TOP, "FAIL" if bad else "OK", len(table(P)) + 2))

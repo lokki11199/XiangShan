@@ -207,16 +207,20 @@ rtl_cfg_suite() {  # CFG OUT
   cases=$RTL_CASES; [ "$cfg" = KEEP+ISO2 ] && cases="D8 D9 D10 D13"
   for s in 1 2 3; do for c in $cases; do "$VER/scripts/run_rtl_dcache.sh" "$cfg" $c $s >> "$out"; done; done
   for s in $(seq 1 10); do "$VER/scripts/run_rtl_dcache.sh" "$cfg" R $s >> "$out"; done
-  [ "$cfg" = KEEP+ISO2 ] && return
-  # the controller model without a mutant (must PASS), then the mutants (must be caught)
-  for s in 1 2 3; do for c in D1 R; do "$VER/scripts/run_rtl_dcache.sh" "$cfg" $c $s CTRL_MODEL >> "$out"; done; done
-  for m in "CTRL_MUTANT_NO_DRAIN:D1 D11" "CTRL_MUTANT_STALE_QUIET:D8" "CTRL_MUTANT_LATE_HOLDB:D9" \
+  # the controller model without a mutant (must PASS), then the mutants (must be caught). An entry CFG/MUTANT runs
+  # only in that configuration; an entry without CFG in FULL and KEEP. NO_DRAIN on D8: the only case with something
+  # to open in sDrain (a Probe taken in the last cycle of sQuiesce); on D1 / D11 it is equivalent (TESTPLAN_deviations).
+  [ "$cfg" != KEEP+ISO2 ] && for s in 1 2 3; do for c in D1 R; do "$VER/scripts/run_rtl_dcache.sh" "$cfg" $c $s CTRL_MODEL >> "$out"; done; done
+  for m in "CTRL_MUTANT_NO_DRAIN:D8" "CTRL_MUTANT_STALE_QUIET:D8" "CTRL_MUTANT_LATE_HOLDB:D9" \
            "CTRL_MUTANT_NO_REQ_IN_ISO:R D13" "CTRL_MUTANT_NO_ISO_LEAD:D1" "FULL/CTRL_MUTANT_ACK_IN_ISO:D10" \
-           "KEEP/CTRL_MUTANT_LATE_FREEZE:D13"; do
+           "KEEP/CTRL_MUTANT_LATE_FREEZE:D13" "KEEP+ISO2/CTRL_MUTANT_NO_REQ_IN_ISO:D13"; do
     mcases=${m#*:}; m=${m%%:*}
-    case $m in */*) [ "${m%%/*}" = "$cfg" ] || continue; m=${m#*/};; esac
+    case $m in
+      */*) [ "${m%%/*}" = "$cfg" ] || continue; m=${m#*/} ;;
+      *)   [ "$cfg" = KEEP+ISO2 ] && continue ;;
+    esac
     for s in 1 2 3; do for c in $mcases; do "$VER/scripts/run_rtl_dcache.sh" "$cfg" $c $s CTRL_MODEL+$m >> "$out"; done; done
-    tag=$(echo "$cfg" | tr 'A-Z' 'a-z'); rm -rf "$VER/build/rtl_${tag}_CTRL_MODEL+$m" "$VER/build/rtl_${tag}_CTRL_MODEL+$m".{lock,log}
+    tag=$(echo "$cfg" | tr 'A-Z' 'a-z' | sed 's/+iso2/_iso2/'); rm -rf "$VER/build/rtl_${tag}_CTRL_MODEL+$m" "$VER/build/rtl_${tag}_CTRL_MODEL+$m".{lock,log}
   done
 }
 s_rtl_dcache() {

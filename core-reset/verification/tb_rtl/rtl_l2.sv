@@ -62,6 +62,7 @@ module rtl_l2 import dp::*; (
   input  logic a_valid, output logic a_ready,
   input  logic [3:0] a_opcode, input logic [2:0] a_param, input logic [SIZE_BITS-1:0] a_size,
   input  logic [SRC_BITS-1:0] a_source, input logic [ADDR_BITS-1:0] a_address,
+  input  logic a_keyword,              // echo.isKeyword: the client wants the beat of its critical word first
   // channel B (to the DUT)
   output logic b_valid, input logic b_ready,
   output logic [2:0] b_opcode, output logic [1:0] b_param, output logic [SIZE_BITS-1:0] b_size,
@@ -77,6 +78,7 @@ module rtl_l2 import dp::*; (
   output logic [3:0] d_opcode, output logic [1:0] d_param, output logic [SIZE_BITS-1:0] d_size,
   output logic [SRC_BITS-1:0] d_source, output logic [SNK_BITS-1:0] d_sink, output logic d_denied,
   output logic [DW-1:0] d_data, output logic d_corrupt,
+  output logic d_keyword,              // echo.isKeyword of the request, returned with its Grant(Data)
   // channel E (from the DUT)
   input  logic e_valid, output logic e_ready, input logic [SNK_BITS-1:0] e_sink,
   // knobs of the stand
@@ -108,12 +110,12 @@ module rtl_l2 import dp::*; (
   logic          d_hold_q;
 
   // A queue
-  logic [3:0] aq_op [QD]; logic [2:0] aq_param [QD]; logic [SRC_BITS-1:0] aq_src [QD]; addr_t aq_addr [QD];
+  logic [3:0] aq_op [QD]; logic [2:0] aq_param [QD]; logic aq_kw [QD]; logic [SRC_BITS-1:0] aq_src [QD]; addr_t aq_addr [QD];
   int aq_rdy [QD]; int aq_head, aq_tail, aq_cnt;
   // D queue
   logic [3:0] dq_op [QD]; logic [1:0] dq_param [QD]; logic [SRC_BITS-1:0] dq_src [QD];
   logic [SNK_BITS-1:0] dq_sink [QD]; logic [BW-1:0] dq_data [QD]; int dq_nb [QD]; int dq_rdy [QD];
-  logic dq_isgrant [QD], dq_isrel [QD], dq_isreq [QD];
+  logic dq_isgrant [QD], dq_isrel [QD], dq_isreq [QD], dq_kw [QD];
   int dq_head, dq_tail, dq_cnt, d_beat;
   // Probe queue
   addr_t pq_addr [QD]; logic [1:0] pq_cap [QD]; logic pq_cbo [QD];
@@ -154,6 +156,7 @@ module rtl_l2 import dp::*; (
   assign d_denied  = 1'b0;
   assign d_data    = dq_data[dq_head][d_beat * DW +: DW];
   assign d_corrupt = 1'b0;
+  assign d_keyword = dq_kw[dq_head];
   assign quiet_noprobe = n_open_req == 0 && n_open_grant == 0 && n_open_rel == 0 && c_beat == 0 && d_beat == 0;
   assign quiet = quiet_noprobe && n_open_probe == 0;
 
@@ -185,12 +188,12 @@ module rtl_l2 import dp::*; (
   // push a response into the D queue (called from the clock block; uses the scratch tail / count)
   task automatic push_d(input logic [3:0] op, input logic [1:0] prm, input logic [SRC_BITS-1:0] src,
                         input logic [SNK_BITS-1:0] snk, input logic [BW-1:0] data, input int nb, input int rdy,
-                        input logic isgrant, input logic isrel, input logic isreq);
+                        input logic isgrant, input logic isrel, input logic isreq, input logic kw = 1'b0);
     if (n_dq_cnt >= QD) perr("K11", "D queue overflow");
     else begin
       dq_op[n_dq_tail] <= op; dq_param[n_dq_tail] <= prm; dq_src[n_dq_tail] <= src; dq_sink[n_dq_tail] <= snk;
       dq_data[n_dq_tail] <= data; dq_nb[n_dq_tail] <= nb; dq_rdy[n_dq_tail] <= rdy;
-      dq_isgrant[n_dq_tail] <= isgrant; dq_isrel[n_dq_tail] <= isrel; dq_isreq[n_dq_tail] <= isreq;
+      dq_isgrant[n_dq_tail] <= isgrant; dq_isrel[n_dq_tail] <= isrel; dq_isreq[n_dq_tail] <= isreq; dq_kw[n_dq_tail] <= kw;
       n_dq_tail = (n_dq_tail + 1) % QD; n_dq_cnt++;
     end
   endtask
@@ -255,7 +258,7 @@ module rtl_l2 import dp::*; (
         else if (a_opcode == A_ACQBLOCK || a_opcode == A_ACQPERM || a_opcode == A_CBOCLEAN ||
                  a_opcode == A_CBOFLUSH || a_opcode == A_CBOINVAL) begin
           aq_op[aq_tail] <= a_opcode; aq_param[aq_tail] <= a_param; aq_src[aq_tail] <= a_source;
-          aq_addr[aq_tail] <= a_address;
+          aq_addr[aq_tail] <= a_address; aq_kw[aq_tail] <= a_keyword;
           aq_rdy[aq_tail] <= now + ((a_opcode >= A_CBOCLEAN) ? cbo_delay : grant_delay);
           aq_tail <= (aq_tail + 1) % QD; n_aq_cnt++;
           d_open_req++;
@@ -361,12 +364,15 @@ module rtl_l2 import dp::*; (
               n_foreign_grant <= n_foreign_grant + 1;
               if (!full_mode) perr("K10", $sformatf("KEEP: GrantData of line %0d, whose data L2 does not hold (poisoned by AcquirePerm)", l));
             end
-            push_d(D_GRANTDATA, (aq_param[aq_head] == 3'd0) ? 2'd1 : 2'd0, aq_src[aq_head], sink_next, mem[l], NBEAT, now,
-                   1'b1, 1'b0, 1'b1);
+            // keyword first (CoupledL2; MissQueue.scala:696 stores beat refill_count ^ isKeyword): the beat that holds
+            // the critical word goes first
+            push_d(D_GRANTDATA, (aq_param[aq_head] == 3'd0) ? 2'd1 : 2'd0, aq_src[aq_head], sink_next,
+                   (aq_kw[aq_head] && NBEAT == 2) ? {mem[l][DW-1:0], mem[l][BW-1:DW]} : mem[l], NBEAT, now,
+                   1'b1, 1'b0, 1'b1, aq_kw[aq_head]);
             dir[l] <= (aq_param[aq_head] == 3'd0) ? 2'd1 : 2'd2;
           end else begin
             // MakeUnique: ownership without data. NtoT: L2's data array holds some other line afterwards
-            push_d(D_GRANT, 2'd0, aq_src[aq_head], sink_next, '0, 1, now, 1'b1, 1'b0, 1'b1);
+            push_d(D_GRANT, 2'd0, aq_src[aq_head], sink_next, '0, 1, now, 1'b1, 1'b0, 1'b1, aq_kw[aq_head]);
             dir[l] <= 2'd2;
             if (aq_param[aq_head] == 3'd1) begin poison[l] <= 1'b1; mem[l] <= foreign_line(l); end
           end

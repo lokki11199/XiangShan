@@ -90,6 +90,7 @@ module dcache_tb import dp::*; ;
     .clk(clk), .rst(rst),
     .a_valid(l2io_0_a_valid), .a_ready(l2io_0_a_ready), .a_opcode(l2io_0_a_bits_opcode), .a_param(l2io_0_a_bits_param),
     .a_size(l2io_0_a_bits_size), .a_source(l2io_0_a_bits_source), .a_address(l2io_0_a_bits_address),
+    .a_keyword(l2io_0_a_bits_echo_isKeyword), .d_keyword(l2io_0_d_bits_echo_isKeyword),
     .b_valid(l2io_0_b_valid), .b_ready(l2io_0_b_ready), .b_opcode(l2io_0_b_bits_opcode), .b_param(l2io_0_b_bits_param),
     .b_size(l2io_0_b_bits_size), .b_source(l2io_0_b_bits_source), .b_address(l2io_0_b_bits_address),
     .b_mask(l2io_0_b_bits_mask), .b_data(l2io_0_b_bits_data), .b_corrupt(l2io_0_b_bits_corrupt),
@@ -131,7 +132,8 @@ module dcache_tb import dp::*; ;
   bit snap_poison [NL];
   bit snap_valid = 1'b0;
   int full_lost = 0, full_foreign = 0, full_skipped = 0;
-  int sram_bnd_iso = 0, sram_mem_iso = 0;
+  int sram_bnd_iso = 0, sram_mem_iso = 0, tag_init_iso = 0;
+  int ld_iso = 0;                                  // load answers not checked: issued or answered while isolated
   int inflight_st = 0, inflight_amo = 0, inflight_cmo = 0;
   int cnt_acq_perm = 0, b2b_direct = 0, ld_hits = 0, ld_misses = 0, seqs = 0;
 
@@ -144,7 +146,7 @@ module dcache_tb import dp::*; ;
   assign l2_reset_point = ctl_core_reset && !core_reset_q;
 
   // loads: the request fired two edges ago is the one answered now
-  logic lf1 = 1'b0, lf2 = 1'b0; addr_t la1 = '0, la2 = '0;
+  logic lf1 = 1'b0, lf2 = 1'b0, li1 = 1'b0, li2 = 1'b0; addr_t la1 = '0, la2 = '0;
   int ld_resp_cnt = 0; bit ld_last_hit = 1'b0, ld_last_miss = 1'b0; logic [63:0] ld_last_data = '0;
 
   always @(posedge clk) begin
@@ -152,6 +154,7 @@ module dcache_tb import dp::*; ;
     idle_q <= quiesce_idle; gq_q <= gate_quiet && l2_quiet; req_q <= req; l1req_q <= ctl_l1_req; busy_q <= ctl_busy;
     iso_run <= ctl_isolate ? iso_run + 1 : 0;
     lf1 <= ld_req_valid && ld_req_ready; la1 <= ld_req_addr; lf2 <= lf1; la2 <= la1;
+    li1 <= ctl_isolate; li2 <= li1;
     if (!rst) begin
 `ifdef CTRL_MODEL
       if (st_model != ph) fail("TB", $sformatf("phase derived from the outputs (%0d) differs from the model state (%0d)", ph, st_model));
@@ -179,13 +182,16 @@ module dcache_tb import dp::*; ;
       if (ctl_l1_req && l1req_q && core_alive &&
           ((st_req_valid && st_req_ready) || (amo_req_valid && amo_req_ready) || (cmo_req_valid && cmo_req_ready)))
         fail("K4", "a store / atomic / CMO was accepted while the DCache must be blocked");
-      // ---- K5: KEEP: the arrays are not accessed while the core is isolated; FULL: the probes must see something
+      // ---- K5: KEEP: the arrays are not accessed while the core is isolated; FULL: the probes must see something.
+      // Not an access of the core: a TagSRAMBank writing zeros to its sets after its own reset (rst_cnt, tile reset in
+      // KEEP), counted apart; any boundary-driven access, any other tag-SRAM or any data-SRAM access fails.
       if (ctl_isolate) begin
         if (|probe_bnd) sram_bnd_iso++;
-        if (|probe_mem_tag || |probe_mem_data) sram_mem_iso++;
-        if (IS_KEEP && (|probe_bnd || |probe_mem_tag || |probe_mem_data))
+        if (|(probe_mem_tag & ~probe_mem_tag_init) || |probe_mem_data) sram_mem_iso++;
+        if (|(probe_mem_tag & probe_mem_tag_init)) tag_init_iso++;
+        if (IS_KEEP && (|probe_bnd || |(probe_mem_tag & ~probe_mem_tag_init) || |probe_mem_data))
           fail("K5", $sformatf("KEEP: array access while isolated (boundary=%0b tag-mem=%0b data-mem=%0b)",
-                               |probe_bnd, |probe_mem_tag, |probe_mem_data));
+                               |probe_bnd, |(probe_mem_tag & ~probe_mem_tag_init), |probe_mem_data));
       end
       // ---- K6: nothing crosses the gate while isolated (the ProbeAck of the gate itself excepted), B and A closed when held
       if (ctl_isolate) begin
@@ -243,7 +249,11 @@ module dcache_tb import dp::*; ;
       ld_last_miss = ld_resp_miss || ld_resp_replay;
       ld_last_hit = !ld_resp_miss && !ld_resp_replay;
       ld_last_data = ld_resp_data;
-      if (ld_last_hit) begin
+      if (ld_last_hit && (ctl_isolate || li2)) begin
+        // issued or answered while isolated: with KEEP the SRAM reads are clamped and the data is undefined; such a
+        // load never leaves the core (DESIGN 4.3). Not checked, counted
+        ld_iso++;
+      end else if (ld_last_hit) begin
         ld_hits++;
         if (l >= 0 && gold_ok[l] && ld_resp_data != gold[l][w*64 +: 64])
           fail("K10", $sformatf("load hit of line %0d word %0d: %h, the core wrote %h", l, w, ld_resp_data, gold[l][w*64 +: 64]));

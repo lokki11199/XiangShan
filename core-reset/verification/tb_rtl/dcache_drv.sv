@@ -126,10 +126,13 @@
     d = '0; for (int b = 0; b < BW / 32; b++) d[b*32 +: 32] = 32'(rnd(32'h7fffffff)) ^ 32'(b * 977);
     m = full ? '1 : rnd_mask();
     id = li % (1 << REQ_ID_BITS);
+    ok = 1'b0;
+    if (!core_alive) return;                  // a core in reset issues no request
     touched[li] = 1'b1;
     if (full) gold_ok[li] = 1'b0;           // the line is overwritten: unknown until the store has an answer
     ok = 1'b0; done = 1'b0;
     while (!done) begin
+      if (!core_alive) return;                // also before a resend: no request from a core in reset
       st_req_valid <= 1'b1; st_req_addr <= line_base(li); st_req_data <= d; st_req_mask <= m; st_req_id <= id[REQ_ID_BITS-1:0];
       taken = 1'b0;
       while (!taken) begin
@@ -159,9 +162,12 @@
   task automatic do_amo(input int li, input int off, input int cmd, input logic [63:0] dat, input logic [63:0] cmp,
                         output logic [63:0] res, output bit ok);
     logic [63:0] old; int w, t; bit done, resend, taken;
-    w = off / 8; touched[li] = 1'b1; ok = 1'b0; done = 1'b0; res = '0;
+    w = off / 8; ok = 1'b0; done = 1'b0; res = '0;
+    if (!core_alive) return;                  // a core in reset issues no request
+    touched[li] = 1'b1;
     old = gold[li][w*64 +: 64];
     while (!done) begin
+      if (!core_alive) return;                // also before a resend: no request from a core in reset
       amo_cmd <= cmd[4:0]; amo_addr <= line_base(li) + addr_t'(off); amo_data <= {dat, dat}; amo_mask <= 16'h00ff;
       amo_cmp <= {cmp, cmp}; amo_req_valid <= 1'b1;
       taken = 1'b0;
@@ -202,7 +208,9 @@
 
   task automatic do_cmo(input int li, input int op, output bit ok);
     int t; bit taken;
-    touched[li] = 1'b1; ok = 1'b0;
+    ok = 1'b0;
+    if (!core_alive) return;                  // a core in reset issues no request
+    touched[li] = 1'b1;
     cmo_opcode <= op[2:0]; cmo_address <= 64'(line_base(li)); cmo_req_valid <= 1'b1;
     taken = 1'b0;
     while (!taken) begin
@@ -223,7 +231,9 @@
   // one load; hit = the answer of the cache was a hit
   task automatic do_ld(input int li, input int off, output bit hit, output bit ok);
     int c0, t; bit taken;
-    touched[li] = 1'b1; ok = 1'b0; hit = 1'b0; c0 = ld_resp_cnt;
+    ok = 1'b0; hit = 1'b0;
+    if (!core_alive) return;                  // a core in reset issues no request
+    touched[li] = 1'b1; c0 = ld_resp_cnt;
     ld_req_addr <= line_base(li) + addr_t'(off); ld_req_valid <= 1'b1;
     taken = 1'b0;
     while (!taken) begin
@@ -583,9 +593,9 @@
     if (ctl_busy) fail("K2", "end of the case: the sequence is still running");
     if (l2_err != 0) err_cnt += l2_err;
     if (err_cnt == 0)
-      $display("RESULT: PASS  probes=%0d gate-acks=%0d lost-dirty=%0d foreign=%0d sram-in-iso=%0d cycles=%0d seqs=%0d b2b=%0d loads=%0d/%0d",
+      $display("RESULT: PASS  probes=%0d gate-acks=%0d lost-dirty=%0d foreign=%0d sram-in-iso=%0d cycles=%0d seqs=%0d b2b=%0d loads=%0d/%0d loads-iso=%0d tag-init-iso=%0d",
                l2_n_probe, l2_n_gate_ack, full_lost, full_foreign, sram_bnd_iso + sram_mem_iso, cycle, seqs, b2b_direct,
-               ld_hits, ld_misses);
+               ld_hits, ld_misses, ld_iso, tag_init_iso);
     else
       $display("RESULT: FAIL ERROR %0d error(s), see the first ERROR line above (probes=%0d gate-acks=%0d cycles=%0d)",
                err_cnt, l2_n_probe, l2_n_gate_ack, cycle);
