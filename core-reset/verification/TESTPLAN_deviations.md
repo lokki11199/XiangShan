@@ -50,3 +50,27 @@
     на SCEN 6 оба — 3 из 3. Дефект плана (решение координатора 17.11.2026): оба идут на SCEN 6 (сиды 1–3) как обычные мутанты
     и на SCEN 2 как редкие (`rare`, сиды из `seedsearch.sh`, SCEN 2, сиды 1..60). Конфигурации — как в TESTPLAN 4.4
     (ACK_IN_ISO — только FULL, NO_HOLDB — только KEEP).
+
+## Предложение для `CLAUDE.md` §5 (таблица «функция — проверка — мутант», v6; 18.11.2026)
+
+Заменяет таблицу v5 (sFlush, флаги пустоты «вместо 16 тактов», P8B); то же, что TESTPLAN §1.2 в редакции 18.11.2026.
+
+| Функция | Свойство / сценарий | Мутант |
+|---|---|---|
+| сброс-уровень, ≥ 100 тактов | P13, P14, S6, S7; SCEN 3, 7, 9 | `RESET_EARLY` |
+| раннее закрытие A некогерентных | P9, S3 | `NO_EARLY_BLOCK` |
+| выход из sQuiesce при тишине некогерентных | P10, S4 | `NO_EARLY_QUIET` |
+| B закрыт с первого такта sDrain | P18, S5; SCEN 6 сл. 4 | `LATE_HOLDB`; `GATE_MUTANT_NO_HOLDB` (KEEP: SCEN 6, SCEN 2 — редкий) |
+| решение по `quiet` текущего такта | P1, P19; SCEN 6 сл. 5 | `STALE_QUIET` |
+| флаги пустоты, опустошение | P19; SCEN 5 C1–C16 (C16 — Acquire в MissQueue не отправлен); RTL D1–D11 | `NO_DRAIN`; `QUIESCE_MUTANT_NO_MQ_WAIT` (SCEN 5 C16); `_NO_WBQ_WAIT`, `_NO_MP_WAIT`, `_NO_BLOCK` (редкие) |
+| опережение изоляции | P21, S9, T5 | `NO_ISO_LEAD`; `ISO_SHORT` (ISO2) |
+| снятие изоляции после выхода ядра | P22, P20, S8, T5 | `ISO_EARLY_DROP`, `NO_FE_WAIT` |
+| `l1.req` в sIso | P23; S18 (по `l1.req`); K4 | `NO_REQ_IN_ISO` (`isoCycles` = 1 — только формально P23, `+FORMALONLY`; ISO2 — S18) |
+| FULL: NtoN только в sReset / sRelease | P12, P8N, S13, K7 | `ACK_IN_ISO` (SCEN 6, SCEN 2 — редкий), `GATE_MUTANT_NO_ACKB`, `GATE_MUTANT_ACK_PARAM` |
+| KEEP: freeze с sIso (запись и чтение) | P24, S15, K5 | `LATE_FREEZE`, `FREEZE_MUTANT_NO_READ_MASK`, `FREEZE_MUTANT_NO_SRAM_MASK` |
+| `hartInReset` = `busy` | P11, S11, T5 | `LATE_HART_IN_RESET` |
+| `busy` без провала | P25, S12; SCEN 8 | `BUSY_GAP` |
+| изоляция TileLink-рёбер | P15, P17; L1–L3 (`fv_adapters`) | `GATE_MUTANT_NO_ISO_A`…`_E`, `ISO_MUTANT_NO_ISO` |
+| маски предвыборки, боковые сигналы | T1–T4 (RTL тайла) | TM1 `PF_MASK_LATE`, TM2 `NO_SIDEBAND_ISO` |
+| KEEP: `l1_keep_reset` от сброса тайла | T6 | TM3 `KEEP_RESET_WITH_CORE` |
+| идентичность при `EnableCoreReset = false` | I1, I2 | — |

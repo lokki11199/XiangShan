@@ -31,6 +31,11 @@ ProbeAck NtoN L2 отдаёт их как действительные (SnpOnce,
 | 16.11.2026 | Chisel v6 (16 файлов), компиляция без ошибок и предупреждений; ревью кода (Sonnet): 0 critical/major, 2 правки | 0af0db8, 881de97 |
 | 16.11.2026 | elaboration модулей (ctrl_full, ctrl_keep, gates) и полная XSNoCTop FULL/KEEP PASS (firtool отдельно), структурные проверки PASS | 3893825 |
 | 16.11.2026 | TESTPLAN.md (архитектор тестов Opus high) | fe1d9b6 |
+| 17.11.2026 | формальная часть f, k, adapters: 0 неожиданных; эквивалентность RTL ↔ модели 8/8 | 1ae968e, adefcec |
+| 17.11.2026 | регрессия: дизайн 198/198, наивный 6/6, мутанты 282/282, +EQUIV 18/18; soak 540/540 × 2 | d975d68, c5dc0cb |
+| 17.11.2026 | RTL-тест DCache D1–D13 FULL: 13/13 с моделью и с RTL-контроллером (стенд нашёл 5 своих ошибок) | 5c67d43 |
+| 18.11.2026 | XSNoCTop off/full/keep PASS; идентичность при EnableCoreReset=false с 7b16188: IDENTICAL (XSNoCTop, DCache) | 2fe7730 |
+| 18.11.2026 | тест изоляции тайла на RTL XSTile: FULL/KEEP PASS, TM1–TM3 пойманы | 1a9c5dd |
 
 Решения пользователя по TESTPLAN §11 (16.11.2026): RTL-тест DCache — в `--quick` (FULL, сид 1), полный набор — в
 `--full`; эталон 7b16188 — разрешены временный git worktree в scratchpad, один прогон и удаление без отдельного
@@ -137,17 +142,27 @@ elaboration v5 и `XSTop.fir` не хранить.
   elaboration XSNoCTop (FULL и KEEP). Опции: `--skip-elab-noc`, `--write-results` (иначе вывод в
   `verification/build/check/`), `--dirty`. Отказ (код 2), если `src/` или `verification/` не закоммичены или
   HEAD не запушен.
-- У каждой функции — направленная проверка и мутант (таблица v5; для v6 её заменит архитектура тестов):
+- У каждой функции — направленная проверка и мутант (таблица v6, 18.11.2026; полная трассировка — TESTPLAN §1.1–1.2):
 
   | Функция | Свойство / сценарий | Мутант |
   |---|---|---|
-  | сброс-уровень, ≥ 100 тактов | P8B, P13 | `RESET_EARLY` |
-  | раннее закрытие A некогерентных | P9 | `NO_EARLY_BLOCK` |
-  | выход из sFlush при тишине некогерентных | P10 | `NO_EARLY_QUIET` |
-  | B закрыт с первого такта sDrain | P18, SCEN 6 случай 4 | `LATE_HOLDB` |
-  | решение по `quiet` текущего такта | P1, SCEN 6 случай 5 | `STALE_QUIET` |
-  | флаги пустоты вместо 16 тактов | P19 | `NO_MP_WAIT`, `NO_WBQ_WAIT`, `NO_DRAIN` |
-  | запуск после выхода frontend из сброса | P20 | `NO_FE_WAIT` |
+  | сброс-уровень, ≥ 100 тактов | P13, P14, S6, S7; SCEN 3, 7, 9 | `RESET_EARLY` |
+  | раннее закрытие A некогерентных | P9, S3 | `NO_EARLY_BLOCK` |
+  | выход из sQuiesce при тишине некогерентных | P10, S4 | `NO_EARLY_QUIET` |
+  | B закрыт с первого такта sDrain | P18, S5; SCEN 6 сл. 4 | `LATE_HOLDB`; `GATE_MUTANT_NO_HOLDB` (KEEP: SCEN 6, SCEN 2 — редкий) |
+  | решение по `quiet` текущего такта | P1, P19; SCEN 6 сл. 5 | `STALE_QUIET` |
+  | флаги пустоты, опустошение | P19; SCEN 5 C1–C16 (C16 — Acquire в MissQueue не отправлен); RTL D1–D11 | `NO_DRAIN`; `QUIESCE_MUTANT_NO_MQ_WAIT` (SCEN 5 C16); `_NO_WBQ_WAIT`, `_NO_MP_WAIT`, `_NO_BLOCK` (редкие) |
+  | опережение изоляции | P21, S9, T5 | `NO_ISO_LEAD`; `ISO_SHORT` (ISO2) |
+  | снятие изоляции после выхода ядра | P22, P20, S8, T5 | `ISO_EARLY_DROP`, `NO_FE_WAIT` |
+  | `l1.req` в sIso | P23; S18 (по `l1.req`); K4 | `NO_REQ_IN_ISO` (`isoCycles` = 1 — только формально P23, `+FORMALONLY`; ISO2 — S18) |
+  | FULL: NtoN только в sReset / sRelease | P12, P8N, S13, K7 | `ACK_IN_ISO` (SCEN 6, SCEN 2 — редкий), `GATE_MUTANT_NO_ACKB`, `GATE_MUTANT_ACK_PARAM` |
+  | KEEP: freeze с sIso (запись и чтение) | P24, S15, K5 | `LATE_FREEZE`, `FREEZE_MUTANT_NO_READ_MASK`, `FREEZE_MUTANT_NO_SRAM_MASK` |
+  | `hartInReset` = `busy` | P11, S11, T5 | `LATE_HART_IN_RESET` |
+  | `busy` без провала | P25, S12; SCEN 8 | `BUSY_GAP` |
+  | изоляция TileLink-рёбер | P15, P17; L1–L3 (`fv_adapters`) | `GATE_MUTANT_NO_ISO_A`…`_E`, `ISO_MUTANT_NO_ISO` |
+  | маски предвыборки, боковые сигналы | T1–T4 (RTL тайла) | TM1 `PF_MASK_LATE`, TM2 `NO_SIDEBAND_ISO` |
+  | KEEP: `l1_keep_reset` от сброса тайла | T6 | TM3 `KEEP_RESET_WITH_CORE` |
+  | идентичность при `EnableCoreReset = false` | I1, I2 | — |
 
 - Немой мутант — дыра: сообщить, не прятать. Список ожидаемо эквивалентных мутантов (`+EQUIV`, формальные
   «должны доказываться») заморожен; расширять — только решением пользователя.

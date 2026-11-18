@@ -1,0 +1,18 @@
+# results_elab.txt (check.sh elab_noc format, TESTPLAN 8.3), written from the runs of executor B (no new run):
+#   elaboration and structural checks: build/elab_seq/summary.txt, HEAD 5c67d43, 2026-11-17T19:10Z..20:33Z, firtool 18.0.0
+#     (LLVM 18.0.0git, ~/.cache/llvm-firtool), make verilog CONFIG=XSNoCTopConfig [YAML_CONFIG=elab/xsnoctop_<cfg>.yml],
+#     JVM_XMX=7G, one configuration after the other, nothing else running; peak RSS = java + firtool
+#   identity: build/ref_seq/summary.txt, HEAD 85a11b3, 2026-11-18T01:05Z..01:46Z, reference elab/ident_ref_7b16188.txt
+#     (7b16188, made 2026-11-18T01:31Z, same firtool). The first identity run (elab_seq, HEAD 5c67d43) gave DIFFERENT in
+#     NewCSR.sv only: the build SHA embedded in NewCSR; 85a11b3 masks it in scripts/rtl_normalize.py, then IDENTICAL.
+#   compile (mill xiangshan.compile) and the module elaboration (CoreResetElab) are not part of these runs: see the
+#     check.sh steps compile / elab_modules.
+elab XSNoCTop off: PASS (Chisel 3:53, firtool 8:32, 1727 files, peak RSS 13688 MB)
+structural off: OK
+elab XSNoCTop full: PASS (Chisel 3:31, firtool 8:25, 1735 files, peak RSS 13666 MB)
+structural full: OK
+elab XSNoCTop keep: PASS (Chisel 3:41, firtool 7:35, 1735 files, peak RSS 13570 MB)
+structural keep: OK
+reference 7b16188: PASS (26:21, peak RSS 13634 MB)
+identity xsnoctop (EnableCoreReset=false vs 7b16188): IDENTICAL (files=1728, total 7a5892bfec7d)
+identity dcache (module bench): IDENTICAL (files=1, total 3ba400278e75)

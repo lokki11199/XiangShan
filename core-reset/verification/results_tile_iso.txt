@@ -1,0 +1,16 @@
+# results_tile_iso.txt (TESTPLAN 6, 8.3): scripts/run_tile_iso.sh all, HEAD 1a9c5dd, 2026-11-18, RTL build/noc_full and
+# build/noc_keep (XSNoCTop elaboration of 5c67d43 sources), Verilator 5.050, seed 1
+TILE CFG=full : RESULT: PASS [T2 SKIP: robHeadPaddr_valid: no such signal in this configuration (TopDown not built); l2_tlb_req_req_ready: no such signal in this configuration (ready unused by CoupledL2, removed by firtool)]
+TILE CFG=keep : RESULT: PASS [T2 SKIP: robHeadPaddr_valid: no such signal in this configuration (TopDown not built); l2_tlb_req_req_ready: no such signal in this configuration (ready unused by CoupledL2, removed by firtool)]
+TILE CFG=full MUTANT=TM1 : CAUGHT  T3
+TILE CFG=full MUTANT=TM2 : CAUGHT  T1 T2
+TILE CFG=keep MUTANT=TM1 : CAUGHT  T3
+TILE CFG=keep MUTANT=TM2 : CAUGHT  T1 T2
+TILE CFG=keep MUTANT=TM3 : CAUGHT  T6
+tile_iso: 0 unexpected
+# counters (both configurations): sequences=10 core-resets=10 isolate-cycles=3003 first-cycles=10 t3-samples=6066
+#   t3-pf-from-core=1457 t3-pf-master-from-core=1502 t4-unmasked-seen=399; keep-reset-in-tile-reset: full 0 (no port), keep 29;
+#   T7: busy 4 cycles after each request input alone and after all three together, one sequence per request
+# mutants: TM1 T3=11 (full, keep); TM2 T1=1506 (L2Top io_cpu_halt_fromCore changed in 1506 cycles while isolated), T2=5;
+#   TM3 T6=2943. Patches: TM1 auto_inner_l2cache_pf_recv_in_addr_valid without ~busy; TM2 io_cpu_halt_fromCore without
+#   the isolate term; TM3 l1_keep_reset <- _core_reset_resetSync_o_reset
