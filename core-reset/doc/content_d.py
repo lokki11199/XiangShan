@@ -116,7 +116,7 @@ def section7(C):
         ['флаги пустоты, опустошение', 'P19; SCEN 5 C1–C16; RTL D1–D11', '`NO_DRAIN`; `QUIESCE_MUTANT_NO_MQ_WAIT`, `_NO_WBQ_WAIT`, `_NO_MP_WAIT`, `_NO_BLOCK`'],
         ['опережение изоляции', 'P21, S9, T5', '`NO_ISO_LEAD`; `ISO_SHORT` (ISO2)'],
         ['снятие изоляции после выхода ядра', 'P22, P20, S8, T5', '`ISO_EARLY_DROP`, `NO_FE_WAIT`'],
-        ['`l1.req` в sIso', 'P23; S18; K4', '`NO_REQ_IN_ISO` (`isoCycles` = 1 — только формально; ISO2 — S18)'],
+        ['`l1.req` в sIso', 'P23; S18; K4', '`NO_REQ_IN_ISO` (`isoCycles` = 1 — формально P23; ISO2 — S18; RTL-тест — проверка фазы стенда, K4 / K5 по файлу не различимы)'],
         ['FULL: NtoN только в sReset / sRelease', 'P12, P8N, S13, K7', '`ACK_IN_ISO`, `GATE_MUTANT_NO_ACKB`, `_ACK_PARAM`'],
         ['KEEP: freeze с sIso', 'P24, S15, K5', '`LATE_FREEZE`, `FREEZE_MUTANT_NO_READ_MASK`, `_NO_SRAM_MASK`'],
         ['`hartInReset` = `busy`; `busy` без провала', 'P11, P25, S11, S12; SCEN 8', '`LATE_HART_IN_RESET`, `BUSY_GAP`'],
@@ -184,7 +184,7 @@ def section72(C):
                '([@4.1] разрешает снять непринятый beat). CBO (опкоды 12–14, ответ CBOAck) — новое в v6.'))
     s.append(table([['P', 'Метки assert', 'Что утверждает', 'Зачем']] + [[p[0], p[1], p[2], p[3]] for p in PROPS], [0.35, 1.8, 2.5, 1.2]))
     s.append(cap('Свойства P1–P25 (25 номеров, 37 меток assert). P23, P24, P11, P6 — «контрактные» (переформулировка спецификации выхода): без них мутанты `NO_REQ_IN_ISO`, `LATE_FREEZE`, '
-                 '`LATE_HART_IN_RESET`, `IN_RESET_WIDE` в этой модели не видны (среда произвольна в sIso, DCache нет); их функциональные следствия проверяются в моделировании (S15, S18, S11) и RTL-тесте (K4, K5).'))
+                 '`LATE_HART_IN_RESET`, `IN_RESET_WIDE` в этой модели не видны (среда произвольна в sIso, DCache нет); их функциональные следствия проверяются в моделировании (S15, S18, S11) и RTL-тесте (K4, K5; мутант `NO_REQ_IN_ISO` в RTL-тесте пойман проверкой фазы стенда).'))
     f, k = C.formal.get('f'), C.formal.get('k')
     s.append(P('<b>Результаты.</b> Unbounded-доказательство `abc pdr` заменяет BMC всей модели (BMC на всю глубину не сходится): в строке «bmc: not run» файлов результатов сказано, '
                'что допущения показаны выполнимыми достигнутыми покрытиями.'))
@@ -447,7 +447,7 @@ def section75(C):
         ['K1', 'точка сброса: `gate.quiet` и независимый счётчик `rtl_l2` — ничего не открыто (Acquire, Grant без GrantAck, Release без ReleaseAck, Probe без ProbeAck, CBO без CBOAck), нет половины сообщения'],
         ['K2', 'подъём `l1.done`: все транзакции закончены по счётчику L2, ответы store / AMO / CBO выданы; в такте решения `l1.idle` = 1'],
         ['K3', 'после `done` не начинается Release (счётчик L2 + assert DCacheImp)'],
-        ['K4', 'со второго такта `l1.req` до сброса: ни одного fire на `st_req`, `amo_req`, `cmoOpReq`, ни нового Acquire'],
+        ['K4', 'со второго такта последовательности до сброса ядра (независимо от `l1.req`): ни одного fire на `st_req`, `amo_req`, `cmoOpReq`, ни нового Acquire'],
         ['K5', 'KEEP: пока `isolate`, на зондах границ модулей (`tagArray`, `bankedDataArray`, `metaArray`, `errorArray`) и самих `*_ext` SRAM (`R*_en`, `W*_en`, `RW*_en`) нет обращений'],
         ['K6', 'в sIso / sReset / sRelease ничего не пересекает гейт (кроме ProbeAck гейта в FULL)'],
         ['K7', 'FULL: гейт берёт Probe только в sReset / sRelease, на каждый — один ProbeAck NtoN, без данных; KEEP: гейт не берёт Probe никогда'],
@@ -456,25 +456,66 @@ def section75(C):
         ['K10', 'данные: эталон vs L2 / L1D; FULL — с учётом 9.1, KEEP — строго'],
         ['K11', 'протокол на стороне L2: опкоды, параметры, beat-ы, source / sink, Release не NtoN, ProbeAckData не NtoN'],
     ], [0.4, 5.4]))
-    s.append(P('<b>Мутанты RTL-теста.</b> Chisel не мутируется; контроллер заменяется моделью `cr_ctrl` с тем же `define`: `NO_DRAIN` (D1, D11 — K1 / K9), `STALE_QUIET` (D8 — K1), `LATE_HOLDB` (D9 — K6), '
-               '`NO_REQ_IN_ISO` (R, D13 — K4), `NO_ISO_LEAD` (D1 — assert контроллера), `ACK_IN_ISO` (FULL, D10 — K7), `LATE_FREEZE` (KEEP, D13 — K5); плюс контрольный прогон «модель без мутанта» — PASS.'))
+    s.append(P('<b>Мутанты RTL-теста.</b> Chisel не мутируется; контроллер заменяется моделью `cr_ctrl` с тем же `define`: `NO_DRAIN` (D8; запланированы K1 / K9, поймал K9), `STALE_QUIET` (D8; запланирован K1, по файлу первой сработала K9), `LATE_HOLDB` (D9; запланирован K6, по файлу K9), '
+               '`NO_REQ_IN_ISO` (R, D13 — проверка фазы стенда; K4 / K5 по файлу не различимы), `NO_ISO_LEAD` (D1 — assert контроллера, K9), `ACK_IN_ISO` (FULL, D10 — K7), `LATE_FREEZE` (KEEP, D13 — K5); плюс контрольный прогон «модель без мутанта» — PASS.'))
     rd = C.rtl_dcache
     if rd and rd['rows']:
+        import re as _re
         sm = rd['summary']
-        rows = [['Конф.', 'Прогонов дизайна (RTL и модель)', 'PASS', 'Мутантов', 'Поймано']]
+        rows = [['Конф.', 'Прогонов дизайна (RTL-контроллер и модель)', 'PASS', 'Мутантных прогонов', 'Поймано']]
         for cfg in ('FULL', 'KEEP', 'KEEP+ISO2'):
             rr = [x for x in rd['rows'] if x['cfg'] == cfg]
             des = [x for x in rr if not x['ctrl'].startswith('model+')]
             mu = [x for x in rr if x['ctrl'].startswith('model+')]
             rows.append([cfg, str(len(des)), str(sum(1 for x in des if x['res'] == 'PASS')), str(len(mu)), str(sum(1 for x in mu if x['res'] != 'PASS'))])
-        s.append(table(rows, [1.0, 1.9, 0.8, 1.0, 1.0]))
-        s.append(P('Итог файла: ' + (('прогонов %d, PASS %d, FAIL %d; мутантных прогонов %d, поймано %d' % sm) if sm else ND) + '.'))
-        tl = sum(int(m) for x in rd['rows'] for m in __import__('re').findall(r'lost-dirty=(\d+)', x['rest']))
-        s.append(P('По строкам FULL: суммарно потеряно грязных строк (`lost-dirty`) %d — это известное нарушение 9.1 в действии, не ошибка проверки.' % tl, 'small'))
+        s.append(table(rows, [1.0, 2.2, 0.8, 1.2, 0.8]))
+        s.append(P('Итог файла: ' + (('прогонов %d, PASS %d, FAIL %d; мутантных прогонов %d, поймано %d' % sm) if sm else ND) + '. Прогоны: D1–D13 × сиды 1–3 и R × сиды 1–10 в каждой конфигурации (в KEEP+ISO2 — D8, D9, D10, D13 и R), контрольные прогоны с моделью контроллера, мутанты.'))
+
+        def num(x, key):
+            m = _re.search(key + r'=(\d+)', x['rest'])
+            return int(m.group(1)) if m else 0
+        keys = [('probes', 'Probe'), ('gate-acks', 'ответов гейта'), ('lost-dirty', 'потеряно грязных строк (FULL, 9.1)'), ('foreign', 'строк с чужими данными (FULL, D2)'),
+                ('sram-in-iso', 'обращений к SRAM по зондам K5 при `isolate`'), ('tag-init-iso', 'отдельно: собственная инициализация массива тегов `rst_cnt` (в предыдущую строку не входит)'),
+                ('loads-iso', 'ответов load при `isolate` (не сверяются, K10)'), ('b2b', 'запросов подряд')]
+        rows = [['Счётчик (суммы по прогонам с RTL-контроллером)', 'FULL', 'KEEP', 'KEEP+ISO2']]
+        for k_, nm in keys:
+            vals = []
+            for cfg in ('FULL', 'KEEP', 'KEEP+ISO2'):
+                des = [x for x in rd['rows'] if x['cfg'] == cfg and x['ctrl'] == 'rtl']
+                vals.append(str(sum(num(x, k_) for x in des)))
+            rows.append([nm] + vals)
+        s.append(table(rows, [3.4, 0.8, 0.8, 0.9]))
+        s.append(cap('Счётчики по строкам `results_rtl_dcache.txt`. `sram-in-iso` в KEEP обязан быть 0 (инициализация тегов `tag-init-iso` считается отдельно и не нарушение); в FULL зонды непусты (обращения к SRAM есть), и это не нарушение — freeze только в KEEP.'))
+        # mutants
+        mrows = {}
+        for x in rd['rows']:
+            if not x['ctrl'].startswith('model+'):
+                continue
+            nm = x['ctrl'][len('model+'):]
+            e = mrows.setdefault(nm, {'runs': 0, 'caught': 0, 'cases': set(), 'cfgs': set(), 'by': {}})
+            e['runs'] += 1
+            e['caught'] += (x['res'] != 'PASS')
+            e['cases'].add(x['case'])
+            e['cfgs'].add(x['cfg'])
+            m = _re.search(r'ERROR (?:ERROR )?(K\d+|[A-Za-z]+)', x['rest'])
+            tag = m.group(1) if m else '?'
+            if tag == 'TB':
+                tag = 'фаза (стенд: фаза по выходам ≠ состояние контроллера)'
+            e['by'][tag] = e['by'].get(tag, 0) + 1
+        rows = [['Мутант (контроллер-модель)', 'Что ломает', 'Конф.', 'Случаи', 'Поймано', 'Кто поймал']]
+        for nm in sorted(mrows):
+            e = mrows[nm]
+            rows.append(['`%s`' % nm.replace('CTRL_MUTANT_', ''), desc(nm), ', '.join(sorted(e['cfgs'])), ' '.join(sorted(e['cases'])),
+                         '%d / %d' % (e['caught'], e['runs']), '; '.join('%s: %d' % kv for kv in sorted(e['by'].items()))])
+        s.append(table(rows, [1.1, 1.8, 0.9, 0.7, 0.5, 1.2]))
+        s.append(cap('Мутанты RTL-теста: контроллер заменён моделью `cr_ctrl` с соответствующим define; «Кто поймал» — первая ошибка в строке результата (K9 — assert контроллера «TileLink traffic between XSCore and L2 while XSCore is isolated»).'))
+        s.append(P('<b>Как ловится `NO_REQ_IN_ISO`.</b> Проверка K4 смотрит всю последовательность со второго такта до сброса ядра независимо от `l1.req`, а ядро стенда выдаёт операции до установки сброса, '
+                   'поэтому мутант, снимающий `l1.req` в sIso, может проявиться функционально (store в sIso, `sram_access_in_iso` в KEEP). Мутант запускается на D13 и R во всех трёх конфигурациях, включая KEEP+ISO2 (там sIso — 2 такта). '
+                   'По файлу результатов все 18 прогонов поймала <b>проверка согласованности фазы стенда</b> («фаза по выходам отличается от состояния модели»); именно она ловит мутант при `isoCycles` = 1, где функционально он не виден. '
+                   'Формально он ловится P23 (7.2), в моделировании при `isoCycles` = 1 — `+FORMALONLY` (7.4). Была ли K4 или K5 вторым сработавшим — по файлу результатов не видно: в строке записана только первая ошибка.'))
+        s.append(P('`NO_DRAIN` запускается на <b>D8</b>, а не на D1 / D11: там он эквивалентен (sQuiesce и так ждёт `done`, а в sDrain открыться нечему, кроме Probe последнего такта sQuiesce — это D8). На D8 он пойман 6 из 6 assert-ом контроллера (K9); на D1 / D11 — 0 из 12 (первый полный прогон).', 'small'))
     else:
-        s.append(box('Результат RTL-теста DCache', [
-            'Файл `results_rtl_dcache.txt` на момент сборки документа отсутствует: ' + ND + '. Полный набор (FULL, KEEP, KEEP+ISO2 × D1–D13 × сиды 1–3, R × сиды 1–10 и мутанты) выполняется шагом `rtl_dcache` команды `check.sh --full`; '
-            'в `--quick` входит FULL, D1–D13, сид 1. Пересоберите документ после появления файла: числа подставятся автоматически.'], 'warn')[0])
+        s.append(box('Результат RTL-теста DCache', ['Файл `results_rtl_dcache.txt` отсутствует: ' + ND + '.'], 'warn')[0])
     s.append(P('Ограничения теста: нет LSU / sbuffer / предвыборки (MemBlock), один порт load без replay-логики LSU; L2 — модель с одним клиентом, без CHI и HN; параметры только `XSNoCTopConfig` '
                '(WPU выключен, `SramedDataArray` не собирается — проверен по коду).', 'small'))
     return s
@@ -535,6 +576,14 @@ def section77(C):
         ['План теста: S18 «DCache не принимает store до сброса ядра» сначала проверялся по состоянию контроллера, а не по `l1.req`; `traffic_en` по `hartInReset` выключил бы load с первого такта и сделал проверку зажима чтения пустой', 'смоук', 'S18 по `l1.req` со счётчиком непустоты (607f458); `traffic_en && !core_rst`'],
         ['NewCSR зашивает SHA коммита → идентичность с 7b16188 сначала различалась (7.1)', 'сравнение RTL', 'нормализатор маскирует SHA'],
         ['Тест тайла: T2 требует шаблонов, которых нет в конфигурации; T1 сравнивал источник подсказки предвыборки и `priv` / `trap` трассы без учёта их `valid`', 'тест тайла (1a9c5dd)', 'явные SKIP; сравнение только при `valid`; `ready` B гейта l1d может меняться в FULL при `ackProbe` (`takeB`)'],
+        ['<b>Порядок beat-ов AcquireBlock (keyword first).</b> Модель L2 стенда не учитывала, что CoupledL2 отдаёт GrantData начиная с нужного слова (`echo isKeyword`): половины строки менялись местами; видно в KEEP как неверные данные после сброса', 'RTL-тест (47779fe)', 'ошибка стенда: модель L2 следует порядку keyword-first'],
+        ['K10: ответы load, выданные или принятые при `isolate`, сравнивались с эталоном. В KEEP чтение SRAM зажато, данные не определены и из ядра не выходят (DESIGN 4.3)', 'RTL-тест', 'ошибка стенда: такие ответы не сверяются, а считаются (`loads-iso`)'],
+        ['Стенд выдавал запросы, пока ядро в сбросе: однотактовые `valid` нарушали протокол CMO-юнита и давали тайм-ауты', 'RTL-тест', 'ошибка стенда: в сбросе ядра запросов нет'],
+        ['K5: массив тегов сам пишет нули во все наборы после сброса тайла (`TagSRAMBank.rst_cnt`, `TagArray.scala:66–75`, домен тайла); это попадало под «обращение при `isolate`»', 'RTL-тест', 'ошибка стенда: инициализация считается отдельно (`tag-init-iso`); любое другое обращение к SRAM тегов и любое к SRAM данных по-прежнему FAIL'],
+        ['<b>`NO_DRAIN` на D1 / D11 эквивалентен</b>: sQuiesce и так ждёт `done`, в sDrain открыться нечему, кроме Probe последнего такта sQuiesce', 'RTL-тест (первый полный прогон: 0 из 12)', 'мутант запускается на D8 (6 из 6); план теста (§5.6) исправлен'],
+        ['Модель L2 выдавала Grant строки, на которую открыт Probe, и ProbeAck NtoN сверялся с уже изменённой директорией (R4)', 'RTL-тест (случайный режим)', 'ошибка стенда: Acquire / CBO строки ждут за Probe этой строки, как запросы одного блока в CoupledL2'],
+        ['В случайном режиме WFI оставался включённым, и операции ядра, чей Acquire держал WFI, не заканчивались (R7, R8, R10)', 'RTL-тест (случайный режим)', 'ошибка стенда: WFI — окно, в котором ядро не выдаёт новых операций'],
+        ['K4 привязана к `l1.req`: мутант `NO_REQ_IN_ISO` глушил и ядро стенда, и проверку', 'RTL-тест', 'K4 смотрит последовательность (со второго такта до сброса), ядро стенда работает до установки сброса; мутант добавлен на KEEP+ISO2 D13 и R'],
     ], [3.2, 0.9, 1.7]))
     s.append(P('Ревью дизайна v6 (Fable high, находка 1, major): `AcquirePerm BtoT` при попадании в BRANCH тоже даёт `MakeUnique`, и FULL теряет не только записи ядра, но и закоммиченную запись другого харта — раздел 9.1. '
                'Остальные находки (опустошение настоящей DCache, идентичность RTL, `isoCycles ≥ 3` в KEEP, место блока freeze) вошли в дизайн и в тесты 7.1, 7.5.'))
