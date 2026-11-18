@@ -30,29 +30,32 @@ def neg(port):
     return r"~\s*_?\w*[Cc]oreResetCtrl\w*_io_%s\b" % port
 
 
+def conns(body, port_rx):
+    """Port connections `.NAME (expr)` of instances in body whose NAME matches port_rx; expr may span lines (firtool wraps
+    long ones), it has no parentheses of its own. [(match object)]"""
+    return list(re.finditer(r"\.(" + port_rx + r")\s*\(([^()]*)\)", body))
+
+
 def tm1(body):
-    # the line that drives the addr_valid of the prefetch bridge and contains ~busy
-    lines = body.split("\n")
-    hits = [i for i, ln in enumerate(lines) if "addr_valid" in ln and re.search(neg("busy"), ln)]
+    # the connection that drives the addr_valid of the prefetch bridge into L2Top and contains ~busy
+    hits = [m for m in conns(body, r"\w*addr_valid") if re.search(neg("busy"), m.group(2))]
     if len(hits) != 1:
-        skipped("TM1: %d lines with addr_valid and ~busy (exactly 1 needed)" % len(hits))
-    i = hits[0]
-    lines[i] = re.sub(neg("busy"), "1'h1", lines[i])
-    return "\n".join(lines), "addr_valid without ~busy: " + lines[i].strip()
+        skipped("TM1: %d addr_valid connections with ~busy (exactly 1 needed)" % len(hits))
+    m = hits[0]
+    expr = re.sub(neg("busy"), "1'h1", m.group(2))
+    return body[:m.start(2)] + expr + body[m.end(2):], "%s without ~busy: %s" % (m.group(1), " ".join(expr.split()))
 
 
 def tm2(body):
-    lines = body.split("\n")
-    hits = [i for i, ln in enumerate(lines) if "cpu_halt" in ln and re.search(neg("isolate"), ln)]
+    hits = [m for m in conns(body, r"\w*cpu_halt\w*") if re.search(neg("isolate"), m.group(2))]
     if len(hits) != 1:
-        skipped("TM2: %d lines with cpu_halt and ~isolate (exactly 1 needed)" % len(hits))
-    i = hits[0]
-    new = re.sub(neg("isolate") + r"\s*&\s*", "", lines[i])
+        skipped("TM2: %d cpu_halt connections with ~isolate (exactly 1 needed)" % len(hits))
+    m = hits[0]
+    new = re.sub(neg("isolate") + r"\s*&\s*", "", m.group(2))
     new = re.sub(r"\s*&\s*" + neg("isolate"), "", new)
-    if new == lines[i] or re.search(neg("isolate"), new):
-        skipped("TM2: the isolate term of cpu_halt is not a plain AND: " + lines[i].strip())
-    lines[i] = new
-    return "\n".join(lines), "cpu_halt without isolate: " + new.strip()
+    if new == m.group(2) or re.search(neg("isolate"), new):
+        skipped("TM2: the isolate term of cpu_halt is not a plain AND: " + " ".join(m.group(2).split()))
+    return body[:m.start(2)] + new + body[m.end(2):], "%s without isolate: %s" % (m.group(1), " ".join(new.split()))
 
 
 def tm3(body):

@@ -52,8 +52,10 @@ one() {  # one CFG MUTANT SEED: prints the result line; return 0 = as expected
   res=$(grep -E '^RESULT:' "$B/run.log" | tail -1)
   bad=$(grep -E 'Assertion failed|%Error' "$B/run.log" | head -1)
   [ -z "$res" ] && res="RESULT: FAIL no RESULT line${bad:+ ($bad)}"
+  local t2s; t2s=$(grep -m1 '^T2 SKIP ' "$B/run.log" | sed 's/^T2 SKIP /T2 SKIP: /')
   if [ -z "$mut" ]; then
-    line="$tag : $res${bad:+ ($bad)}"; echo "$line"
+    line="$tag : $res${bad:+ ($bad)}${t2s:+ [$t2s]}"; echo "$line"
+    grep '^T1 summary' "$B/run.log" | sed 's/^/  /' 
     [ "$res" = "RESULT: PASS" ] && [ -z "$bad" ]
   else
     if [ "$res" = "RESULT: PASS" ] && [ -z "$bad" ]; then echo "$tag : NOT CAUGHT"; return 1

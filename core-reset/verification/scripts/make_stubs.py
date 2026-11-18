@@ -55,6 +55,12 @@ T2_PATTERNS = [
 # T2 patterns that must find at least one signal (the others are optional in a configuration)
 T2_REQUIRED = [r"cpu_halt", r"(^|_)msiAck", r"groups_\d+_valid", r"iretire", r"itype", r"robHeadPaddr_valid",
                r"l2_tlb_req_req_ready", r"l2_tlb_req_resp_valid", r"resetInFrontend", r"l2_pmp_resp"]
+# A required pattern that finds no signal is an error, except for these known absences: they are reported as
+# `T2 SKIP <pattern>: no such signal in this configuration (<reason>)` in the run output and in the results (not a pass)
+T2_KNOWN_ABSENT = {
+    r"robHeadPaddr_valid": "TopDown not built",
+    r"l2_tlb_req_req_ready": "ready unused by CoupledL2, removed by firtool",
+}
 T3_PATTERNS = [r"(^|_)addr_valid$", r"l2_pf_master_en$"]   # not robHeadPaddr_valid
 
 
@@ -130,7 +136,15 @@ def closure(top, mods, cut):
 
 
 def qualifier(name, names):
-    """The valid signal that qualifies a data field, or None."""
+    """The valid signal that qualifies a data field, or None (DESIGN 6.2: a data field qualified by its valid needs no clamp)."""
+    # the prefetch hint: pf_source is qualified by addr_valid of the same bridge
+    m = re.match(r"^(.*)_pf_source$", name)
+    if m and m.group(1) + "_addr_valid" in names:
+        return m.group(1) + "_addr_valid"
+    # trace: L2Top captures toEncoder.priv and .trap with RegEnable on groups(0).valid (L2Top.scala:286-293)
+    m = re.match(r"^(.*_toEncoder)_(priv|trap_\w+)$", name)
+    if m and m.group(1) + "_groups_0_valid" in names:
+        return m.group(1) + "_groups_0_valid"
     m = re.match(r"^(.*)_bits(_.*)?$", name)
     if m and m.group(1) + "_valid" in names:
         return m.group(1) + "_valid"
@@ -153,7 +167,7 @@ def vec(w):
     return "" if w == 1 else "[%d:0] " % (w - 1)
 
 
-def monitor_block(sigs, names, allow, where, prefix):
+def monitor_block(sigs, names, allow, where, prefix, cfg):
     names = {n for _, n in sigs}   # a qualifier is used only if it is monitored here too (its _q register exists)
     """SystemVerilog of the T1 / T2 / T3 monitors on a list of (width, name) signals visible in the module.
     Returns (code, report lines, matched T2 patterns)."""
@@ -162,9 +176,14 @@ def monitor_block(sigs, names, allow, where, prefix):
     code.append("  wire ti_chk_stable = $root.tile_iso_tb.chk_stable, ti_chk_first = $root.tile_iso_tb.chk_first;")
     code.append("  wire ti_busy = $root.tile_iso_tb.busy_now;")
     code.append("  int n_t1 = 0, n_t2 = 0, n_t3 = 0, n_t3_checked = 0;")
+    code.append("  wire ti_ack = $root.tile_iso_tb.ack_now, ti_ack_q = $root.tile_iso_tb.ack_q;")
+    fin = []   # final summary: every signal with a T1 violation and its number of cycles
     for w, n in sigs:
         q = qualifier(n, names)
         allowed = any(p.search(n) for p in allow)
+        # B ready of the L1D gate to L2: 0 or takeB, registers of the gate (DESIGN 3, 6.1). FULL only, and only in the
+        # cycles where the controller's ackProbe is (or was) high; in KEEP and outside ackProbe a change is an error
+        b_ready_ack = where == "L2Top" and cfg == "full" and re.search(r"_b_ready$", n) is not None
         t2 = [(p, k) for p, k in T2_PATTERNS if re.search(p, n)]
         t3 = any(re.search(p, n) for p in T3_PATTERNS)
         code.append("  logic %s%s_q_%s;" % (vec(w), prefix, n))
@@ -174,13 +193,19 @@ def monitor_block(sigs, names, allow, where, prefix):
             what.append("T1 allowed")
         else:
             cond = "ti_chk_stable && %s !== %s_q_%s" % (n, prefix, n)
+            if b_ready_ack:
+                cond += " && !(ti_ack || ti_ack_q)"
+                what.append("T1 except while ackProbe (FULL, gate takeB)")
             if q:
                 cond += " && (%s || %s_q_%s)" % (q, prefix, q)   # compared only while its valid is (was) high
                 what.append("T1 when %s" % q)
             else:
                 what.append("T1")
-            body.append('    if (%s) begin n_t1++; if (n_t1 <= 20) $display("[%%0t] ERROR T1: %s %s changed while isolated (%%h -> %%h)", $time, %s_q_%s, %s); end'
-                        % (cond, where, n, prefix, n, n))
+            code.append("  int c1_%s_%s = 0;" % (prefix, n))
+            body.append('    if (%s) begin n_t1++; c1_%s_%s++; if (n_t1 <= 20) $display("[%%0t] ERROR T1: %s %s changed while isolated (%%h -> %%h)", $time, %s_q_%s, %s); end'
+                        % (cond, prefix, n, where, n, prefix, n, n))
+            fin.append('    if (c1_%s_%s != 0) $display("T1 summary: %s %s changed in %%0d cycles while isolated", c1_%s_%s);'
+                       % (prefix, n, where, n, prefix, n))
         for p, k in t2:
             hit.add(p)
             exp = {"zero": "'0", "one": "1'b1", "ones": "'1"}[k]
@@ -196,6 +221,9 @@ def monitor_block(sigs, names, allow, where, prefix):
         code.extend(body)
         code.append("  end")
         rep.append("%-8s %-70s %s" % (where, n, ", ".join(what)))
+    code.append("  final begin")
+    code.extend(fin)
+    code.append("  end")
     return code, rep, hit
 
 
@@ -312,7 +340,7 @@ def main():
             e = "'0"
         s.append("  assign %s = %s;" % (n, e))
     mon_in = [(w, n) for d, w, n in lports if d == "input" and n not in ("clock", "reset")]
-    code, rep_l2, hit_l2 = monitor_block(mon_in, lnames, allow, "L2Top", "l2")
+    code, rep_l2, hit_l2 = monitor_block(mon_in, lnames, allow, "L2Top", "l2", cfg)
     s.extend(code)
     s.append("endmodule")
     open(os.path.join(out, "stub_L2Top_%s.sv" % cfg), "w").write("\n".join(s) + "\n")
@@ -351,14 +379,16 @@ def main():
     s.append("  XSTile u_tile (\n    " + ",\n    ".join(conns) + ");")
     s.append("  assign ti_core_reset_busy = %s; assign ti_core_in_reset = %s; assign ti_hart_in_reset = %s;" % (o_busy, o_inr, o_hir))
     mon_out = [(w, n) for d, w, n in tports if d == "output"]
-    code, rep_t, hit_t = monitor_block(mon_out, tnames, allow, "XSTile", "xt")
+    code, rep_t, hit_t = monitor_block(mon_out, tnames, allow, "XSTile", "xt", cfg)
     s.extend(code)
     s.append("endmodule")
     open(os.path.join(out, "tile_iso_dut_%s.sv" % cfg), "w").write("\n".join(s) + "\n")
 
     # ---------------- names, files, report
     hit = hit_l2 | hit_t
-    missing_t2 = [p for p in T2_REQUIRED if p not in hit]
+    absent = [p for p in T2_REQUIRED if p not in hit]
+    missing_t2 = [p for p in absent if p not in T2_KNOWN_ABSENT]
+    skip_t2 = ["%s: no such signal in this configuration (%s)" % (p, T2_KNOWN_ABSENT[p]) for p in absent if p in T2_KNOWN_ABSENT]
     with open(os.path.join(out, "tile_iso_names_%s.svh" % cfg), "w") as f:
         f.write("// generated by scripts/make_stubs.py (%s)\n" % cfg)
         f.write("`define TI_CORE tile_iso_tb.dut.u_tile.%s\n" % core_i[0])
@@ -368,9 +398,12 @@ def main():
         f.write("`define TI_N_GATES %d\n`define TI_N_ISO %d\n" % (len(gates), len(isos)))
         if keep_reset:
             f.write("`define TI_HAS_KEEP_RESET\n")
+        if "io_ackProbe" in ctl_ports:   # KEEP: ackProbe is constant 0 and firtool removes the port
+            f.write("`define TI_HAS_ACK_PROBE\n")
         if not tlb_valid_in:
             f.write("`define TI_NO_TLB_REQ\n")
         f.write("`define TI_T2_MISSING \"%s\"\n" % " ".join(missing_t2))
+        f.write("`define TI_T2_SKIP \"%s\"\n" % "; ".join(skip_t2))
     files, missing = closure("XSTile", mods, {"XSCore", "L2Top"})
     if missing:
         die("modules instantiated under XSTile but not defined in %s: %s" % (rtl, sorted(missing)))
@@ -381,11 +414,12 @@ def main():
         f.write("# %s: XSTile gates %d, isolations %d, core %s, l2top %s, controller %s %s, keep_reset %s\n"
                 % (cfg, len(gates), len(isos), core_i[0], l2_i[0], ctl[0][0], ctl[0][1], keep_reset))
         f.write("# T2 patterns without a signal: %s\n" % (missing_t2 or "none"))
+        f.write("# T2 SKIP: %s\n" % ("; ".join(skip_t2) or "none"))
         f.write("\n".join(rep_l2 + rep_t) + "\n")
     print("make_stubs %s: %d modules in the closure of XSTile, XSCore %d ports (%d outputs), L2Top %d ports, XSTile %d ports; "
           "gates %d, isolations %d, keep_reset %s, T2 patterns without a signal: %s"
           % (cfg, len(files), len(cports), len(outs), len(lports), len(tports), len(gates), len(isos),
-             keep_reset or "-", missing_t2 or "none"))
+             keep_reset or "-", missing_t2 or "none") + ("; T2 SKIP: " + "; ".join(skip_t2) if skip_t2 else ""))
 
 
 if __name__ == "__main__":

@@ -28,6 +28,12 @@ module tile_iso_tb;
   // ---- state of the controller (read through the hierarchy) and the windows of the monitors
   wire busy_now = `TI_CTRL.io_busy;
   wire iso_now = `TI_CTRL.io_isolate;
+`ifdef TI_HAS_ACK_PROBE
+  wire ack_now = `TI_CTRL.io_ackProbe;           // the gate answers Probes (FULL, sReset / sRelease): its B ready is takeB
+`else
+  wire ack_now = 1'b0;                           // KEEP: the controller has no ackProbe (constant 0, removed by firtool)
+`endif
+  logic ack_q = 1'b0; always @(posedge clock) ack_q <= ack_now;
   logic iso_q = 1'b0, tile_up = 1'b0; int up_cnt = 0;
   always @(posedge clock) begin
     iso_q <= iso_now;
@@ -119,6 +125,7 @@ module tile_iso_tb;
     if (t1) bad = {bad, " T1"};
     if (t2 || `TI_T2_MISSING != "") bad = {bad, " T2"};
     if (`TI_T2_MISSING != "") $display("ERROR T2: patterns without a signal (names differ in this RTL): %s", `TI_T2_MISSING);
+    if (`TI_T2_SKIP != "") $display("T2 SKIP %s", `TI_T2_SKIP);
     if (t3 || t3c == 0 || n_t3_pf == 0 || n_t3_master == 0) bad = {bad, " T3"};
     if (e_t4) bad = {bad, " T4"};
 `ifndef TI_NO_TLB_REQ
