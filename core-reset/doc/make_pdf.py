@@ -69,7 +69,7 @@ def main():
     story += content_c.section6(C)
     story += content_d.section7(C)
     for f in (content_d.section71, content_d.section72, content_d.section73, content_d.section74,
-              content_d.section75, content_d.section76, content_d.section77):
+              content_d.section75, content_d.section76, content_d.section77, content_d.section78):
         story += f(C)
     story += content_e.section8(C)
     story += content_e.section9(C)

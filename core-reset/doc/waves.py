@@ -12,9 +12,9 @@ F, FB = 'DejaVu', 'DejaVu-Bold'
 INK = colors.HexColor('#1f2328')
 GREY = colors.HexColor('#6b7280')
 LG = colors.HexColor('#dcdfe3')
-STATE_FILL = ['#e4f4e8', '#e6eefb', '#fff1d9', '#fdeaea', '#efe8f8']
-FST_FILL = ['#f0f1f3', '#fff1d9', '#e6eefb', '#dbe6f7', '#efe8f8']
-FST_NAMES = ['sIdle', 'sDrain', 'sSweep', 'sWait', 'sDone']
+STATE_FILL = ['#e4f4e8', '#e6eefb', '#fff1d9', '#efe8f8', '#fdeaea', '#efe8f8']
+FST_FILL = ['#f0f1f3', '#fff1d9', '#efe8f8']
+FST_NAMES = ['sIdle', 'sDrain', 'sDone']
 C_OPS = {4: 'ProbeAck', 5: 'ProbeAckData', 6: 'Release', 7: 'ReleaseData'}
 C_COL = {4: '#1f7a35', 5: '#1f7a35', 6: '#2a5db0', 7: '#2a5db0'}
 
@@ -210,23 +210,24 @@ def _common_ctl_rows(r, w):
 
 # ------------------------------------------------------------------------------------------------ diagram 1
 def wave1():
-    w = load('w1_sweep_scen1.vcd')
+    w = load('w1_full_scen1.vcd')
     if w is None:
         return None
-    ok, msg, c0, c1, ev = vcd.find_sweep1(w)
+    ok, msg, c0, c1, ev = vcd.find_full1(w)
     if not ok:
         return None
     c0 = max(1, ev - 8)
     c1 = min(w.n - 1, c1 - 8)
-    r = Rows(w, c0, c1, 'SWEEP, SCEN 1, seed 1: вся последовательность', tick=10)
+    r = Rows(w, c0, c1, 'FULL, SCEN 1, seed 1: вся последовательность', tick=10)
     st = w['ctl_st']
     r.bit('req (запрос)', lambda i: w['req'][i], '#2a5db0')
     r.state('состояние CoreResetCtrl', lambda i: st[i], vcd.STATE_NAMES, STATE_FILL)
     r.bit('earlyBlock (A некогерентных)', lambda i: w['early_block'][i], '#b3261e')
     r.bit('quiet некогерентных (l1i, i_mmio)', lambda i: 1 if (w['quiet1'][i] and w['quiet2'][i]) else 0, '#1f7a35')
-    r.state('DCacheFlushUnit', lambda i: w['u_dc.fst'][i], FST_NAMES, FST_FILL)
-    r.bit('l1.done', lambda i: w['flush_done'][i], '#1f7a35')
-    r.bit('l1.idle', lambda i: w['flush_idle'][i], '#1f7a35')
+    r.state('DCacheQuiesceUnit', lambda i: w['u_dc.u_q.state'][i], FST_NAMES, FST_FILL)
+    r.bit('l1.done', lambda i: w['quiesce_done'][i], '#1f7a35')
+    r.bit('l1.idle', lambda i: w['quiesce_idle'][i], '#1f7a35')
+    r.bit('freeze (KEEP)', lambda i: w['l1_freeze'][i], '#6b3fa0')
     r.bus('строк в L1D', lambda i: w['n_l1_lines'][i])
     r.bus('строк в директории L2', lambda i: w['n_dir_lines'][i])
 
@@ -249,7 +250,7 @@ def wave1():
     r.bit('сброс frontend', lambda i: w['fe_rst'][i], '#c77a0a')
     r.bit('l1.alive', lambda i: w['dc_alive'][i], '#1f7a35')
     for i in range(c0 + 1, c1):
-        if st[i] != st[i - 1] and st[i] is not None and st[i] < 5:
+        if st[i] != st[i - 1] and st[i] is not None and st[i] < 6:
             r.mark(i, vcd.STATE_NAMES[st[i]])
     return r.build(), msg
 
@@ -258,10 +259,11 @@ def _summary_w1(w):
     st = w['ctl_st']
     c0 = _first(st, 0, 1)
     d = _first(st, 1, 2)
-    rs = _first(st, 2, 3)
-    rl = _first(st, 3, 4)
-    idl = _first(st, 4, 0)
-    return dict(flush=d - c0, drain=rs - d, reset=rl - rs, release=idl - rl, total=idl - c0)
+    iso = _first(st, 2, 3)
+    rs = _first(st, 3, 4)
+    rl = _first(st, 4, 5)
+    idl = _first(st, 5, 0)
+    return dict(flush=d - c0, drain=iso - d, iso=rs - iso, reset=rl - rs, release=idl - rl, total=idl - c0)
 
 
 # ------------------------------------------------------------------------------------------------ diagram 2
@@ -273,11 +275,11 @@ def wave2():
     if not ok:
         return None
     st = w['ctl_st']
-    rs = _first(st, 2, 3, d)
+    rs = _first(st, 3, 4, d)
     c0, c1 = d - 10, rs + 6
-    r = Rows(w, c0, c1, 'KEEP, SCEN 6, seed 1, случай 5: Probe принят гейтом в последнем такте sFlush', tick=2)
+    r = Rows(w, c0, c1, 'KEEP, SCEN 6, seed 1, случай 5: Probe принят гейтом в последнем такте sQuiesce', tick=2)
     r.state('состояние CoreResetCtrl', lambda i: st[i], vcd.STATE_NAMES, STATE_FILL)
-    r.state('DCacheFlushUnit', lambda i: w['u_dc.fst'][i], FST_NAMES, FST_FILL)
+    r.state('DCacheQuiesceUnit', lambda i: w['u_dc.u_q.state'][i], FST_NAMES, FST_FILL)
     r.bit('earlyBlock', lambda i: w['early_block'][i], '#b3261e')
     r.bit('gateBlock (A l1d)', lambda i: w['gate_block'][i], '#b3261e')
     r.bit('holdProbe', lambda i: w['hold_probe'][i], '#c77a0a')
@@ -291,8 +293,8 @@ def wave2():
             return (C_OPS.get(w['lc_op'][i], ''), C_COL.get(w['lc_op'][i], '#6b7280'))
     r.ev('C к L2 (гейт принял и отдал)', cev)
     r.bit('quiet гейта l1d (quiet0)', lambda i: w['quiet0'][i], '#1f7a35')
-    r.bit('l1.done', lambda i: w['flush_done'][i], '#1f7a35')
-    r.bit('l1.idle', lambda i: w['flush_idle'][i], '#1f7a35')
+    r.bit('l1.done', lambda i: w['quiesce_done'][i], '#1f7a35')
+    r.bit('l1.idle', lambda i: w['quiesce_idle'][i], '#1f7a35')
     r.bit('coreReset', lambda i: w['core_rst'][i], '#b3261e')
     r.bit('isolate', lambda i: w['isolate'][i], '#6b3fa0')
     r.mark(d - 1, 'Probe принят', '#1f7a35')
@@ -311,7 +313,7 @@ def wave3():
         return None
     st = w['ctl_st']
     ack = None
-    e = _first(st, 4, 0, d)
+    e = _first(st, 5, 0, d)
     for i in range(e, w.n):
         if w['lc_v'][i] == 1 and w['lc_r'][i] == 1 and w['lc_op'][i] in (4, 5):
             ack = i
@@ -336,12 +338,13 @@ def wave3():
             return (C_OPS.get(w['lc_op'][i], ''), C_COL.get(w['lc_op'][i], '#6b7280'))
     r.ev('C к L2 (ответ на Probe)', cev)
     r.mark(d, 'sDrain', '#6b7280')
-    rs = _first(st, 2, 3, d)
+    rs = _first(st, 3, 4, d)
     r.mark(rs, 'sReset', '#b3261e')
-    r.mark(_first(st, 3, 4, d), 'sRelease', '#6b3fa0')
+    r.mark(_first(st, 4, 5, d), 'sRelease', '#6b3fa0')
+    r.mark(_first(st, 2, 3, d), 'sIso', '#6b3fa0')
     r.mark(e, 'sIdle', '#1f7a35')
     r.mark(ack, 'ProbeAck%s' % ('Data' if w['lc_op'][ack] == 5 else ''), '#1f7a35')
-    return r.build(), msg, dict(held=ack - d, reset=_first(st, 3, 4, d) - rs)
+    return r.build(), msg, dict(held=ack - d, reset=_first(st, 4, 5, d) - rs)
 
 
 # ------------------------------------------------------------------------------------------------ diagram 4
@@ -353,16 +356,16 @@ def wave4():
     if not ok:
         return None
     st = w['ctl_st']
-    rs = _first(st, 2, 3, d)
+    rs = _first(st, 3, 4, d)
     c0, c1 = d - 4, rs + 10
-    r = Rows(w, c0, c1, 'KEEP, момент установки сброса (тот же сброс, случай 4)', tick=1, label_w=150)
+    r = Rows(w, c0, c1, 'KEEP, опережение изоляции и момент установки сброса (тот же сброс, случай 4)', tick=1, label_w=150)
     r.state('состояние CoreResetCtrl', lambda i: st[i], vcd.STATE_NAMES, STATE_FILL)
     r.bit('holdProbe (функция регистра состояния)', lambda i: w['hold_probe'][i], '#c77a0a')
     r.bit('B от L2: valid (L2 предлагает Probe)', lambda i: w['lb_v'][i], '#b3261e')
     r.bit('B ready гейта к L2', lambda i: w['lb_r'][i], '#1f7a35')
     r.bit('quiet всех гейтов и l1.done && idle', lambda i: 1 if (w['quiet0'][i] and w['quiet1'][i] and w['quiet2'][i]
-                                                                  and w['iso_quiet'][i] and w['flush_done'][i]
-                                                                  and w['flush_idle'][i]) else 0, '#1f7a35')
+                                                                  and w['iso_quiet'][i] and w['quiesce_done'][i]
+                                                                  and w['quiesce_idle'][i]) else 0, '#1f7a35')
     r.bit('coreReset (регистр)', lambda i: w['ctl_core_reset'][i], '#b3261e')
     r.bit('isolate (регистр)', lambda i: w['isolate'][i], '#6b3fa0')
     r.bit('сброс внутри ядра (после синхронизатора)', lambda i: w['core_rst'][i], '#c77a0a')
@@ -371,10 +374,11 @@ def wave4():
     r.bit('на стороне тайла: A valid к L2 (la_v)', lambda i: w['la_v'][i], '#2a5db0')
     r.bit('на стороне тайла: C valid к L2 (lc_v)', lambda i: w['lc_v'][i], '#2a5db0')
     r.mark(d, 'sDrain', '#6b7280')
-    r.mark(rs, 'sReset: coreReset и isolate на одном фронте', '#b3261e')
+    r.mark(_first(st, 2, 3, d), 'sIso: isolate := 1', '#6b3fa0')
+    r.mark(rs, 'sReset: coreReset := 1', '#b3261e')
     return r.build(), msg, dict(rs=rs - d)
 
 
 def available():
-    return {k: os.path.exists(os.path.join(WDIR, k)) for k in ('w1_sweep_scen1.vcd', 'w2_keep_case5.vcd',
+    return {k: os.path.exists(os.path.join(WDIR, k)) for k in ('w1_full_scen1.vcd', 'w2_keep_case5.vcd',
                                                                'w3_keep_case4.vcd')}

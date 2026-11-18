@@ -2,7 +2,7 @@
 """Small streaming VCD reader for the waveforms of core-reset/doc/make_pdf.py (section 7.4), and the event
 checks that make_waves.sh uses to pick the simulation windows (no hard-coded cycle numbers).
 
-  python3 vcd.py extract <sweep1|case4|case5> IN.vcd OUT.vcd [AFTER_CYCLE]
+  python3 vcd.py extract <full1|case4|case5|case6> IN.vcd OUT.vcd [AFTER_CYCLE]
         looks for the event in IN.vcd (not before the testbench cycle AFTER_CYCLE), writes a small VCD around it
         (only the signals of SIGNALS); exit code 0 if the event was found, prints it
   python3 vcd.py info FILE.vcd        states of CoreResetCtrl over the file
@@ -14,17 +14,17 @@ the edge ends (a register shows its new value in the cycle after its edge).
 import sys
 
 # CoreResetCtrl states of the testbench (cr_tb.ctl_st)
-S_IDLE, S_FLUSH, S_DRAIN, S_RESET, S_RELEASE = range(5)
-STATE_NAMES = ['sIdle', 'sFlush', 'sDrain', 'sReset', 'sRelease']
+S_IDLE, S_QUIESCE, S_DRAIN, S_ISO, S_RESET, S_RELEASE = range(6)
+STATE_NAMES = ['sIdle', 'sQuiesce', 'sDrain', 'sIso', 'sReset', 'sRelease']
 
-# every signal used by the diagrams (names inside cr_tb; u_dc.fst is the state of the DCache flush unit)
+# every signal used by the diagrams (names inside cr_tb; u_dc.u_q.state is the state of the DCache quiesce unit)
 SIGNALS = [
     'req', 'ctl_st', 'busy', 'early_block', 'gate_block', 'hold_probe', 'ack_probe', 'isolate', 'ctl_core_reset',
-    'core_rst', 'fe_rst', 'dc_alive', 'hart_in_reset', 'l1_freeze', 'flush_done', 'flush_idle', 'quiet0', 'quiet1',
+    'core_rst', 'fe_rst', 'dc_alive', 'hart_in_reset', 'l1_freeze', 'quiesce_done', 'quiesce_idle', 'quiet0', 'quiet1',
     'quiet2', 'iso_quiet', 'n_l1_lines', 'n_dir_lines', 'lb_v', 'lb_r', 'lb_par', 'lb_addr', 'lc_v', 'lc_r',
     'lc_op', 'lc_par', 'ld_v', 'ld_r', 'le_v', 'le_r', 'la_v', 'la_r', 'cc_v', 'cc_r', 'gb_v', 'gb_r', 'db_v',
-    'db_r', 'c_gate', 'b_gate', 'ma_v', 'ma_r', 'wa_v', 'wa_r', 'ca_v', 'ca_r', 'cyc_tb', 'last_flush_take',
-    'u_dc.fst', 'u_dc.inflight', 'tgt_l1', 'tgt_dir', 'tgt_addr', 'u_l2.prb_v',
+    'db_r', 'c_gate', 'b_gate', 'ma_v', 'ma_r', 'wa_v', 'wa_r', 'ca_v', 'ca_r', 'cyc_tb', 
+    'u_dc.u_q.state', 'tgt_l1', 'tgt_dir', 'tgt_addr', 'u_l2.prb_v',
 ]
 
 
@@ -178,36 +178,36 @@ def transitions(seq, a, b, start=0):
     return [i for i in range(max(1, start), len(seq)) if seq[i - 1] == a and seq[i] == b]
 
 
-def find_sweep1(w, start=0):
-    """a whole sequence: sIdle -> sFlush ... sRelease -> sIdle inside the window; returns (ok, msg, c0, c1, event)"""
+def find_full1(w, start=0):
+    """a whole sequence: sIdle -> sQuiesce ... sRelease -> sIdle inside the window; returns (ok, msg, c0, c1, event)"""
     st = w['ctl_st']
-    t1 = transitions(st, S_IDLE, S_FLUSH, start)
+    t1 = transitions(st, S_IDLE, S_QUIESCE, start)
     if not t1:
         return False, 'no sequence in the window', 0, 0, None
     t2 = [i for i in transitions(st, S_RELEASE, S_IDLE, start) if i > t1[0]]
     if not t2:
         return False, 'the sequence is not complete in the window', 0, 0, None
-    return (True, 'sFlush at sample %d, sIdle again at %d (%d cycles)' % (t1[0], t2[0], t2[0] - t1[0]),
+    return (True, 'sQuiesce at sample %d, sIdle again at %d (%d cycles)' % (t1[0], t2[0], t2[0] - t1[0]),
             t1[0] - 20, t2[0] + 20, t1[0])
 
 
 def find_case5(w, start=0):
-    """a Probe taken by the gate in the last cycle of sFlush (L2 offers it, B ready = 1, valid and ready both 1)"""
+    """a Probe taken by the gate in the last cycle of sQuiesce (L2 offers it, B ready = 1, valid and ready both 1)"""
     st = w['ctl_st']
-    for d in transitions(st, S_FLUSH, S_DRAIN, start):
+    for d in transitions(st, S_QUIESCE, S_DRAIN, start):
         if w['lb_v'][d - 1] == 1 and w['lb_r'][d - 1] == 1:
             ends = [i for i in transitions(st, S_RELEASE, S_IDLE, d)]
             if not ends:
                 continue
-            return (True, 'Probe taken in the last cycle of sFlush (sample %d), sDrain from %d' % (d - 1, d),
+            return (True, 'Probe taken in the last cycle of sQuiesce (sample %d), sDrain from %d' % (d - 1, d),
                     d - 40, ends[0] + 25, d)
-    return False, 'no Probe taken in the last cycle of sFlush', 0, 0, None
+    return False, 'no Probe taken in the last cycle of sQuiesce', 0, 0, None
 
 
 def find_case4(w, start=0):
     """a Probe offered by L2 in the first cycle of sDrain, not taken (held), delivered to the DCache after the reset"""
     st = w['ctl_st']
-    for d in transitions(st, S_FLUSH, S_DRAIN, start):
+    for d in transitions(st, S_QUIESCE, S_DRAIN, start):
         if w['lb_v'][d] == 1 and w['lb_r'][d] == 0 and w['hold_probe'][d] == 1:
             ends = transitions(st, S_RELEASE, S_IDLE, d)
             if not ends:
@@ -221,7 +221,23 @@ def find_case4(w, start=0):
     return False, 'no Probe offered in the first cycle of sDrain and answered after the reset', 0, 0, None
 
 
-CHECKS = {'sweep1': find_sweep1, 'case4': find_case4, 'case5': find_case5}
+def find_case6(w, start=0):
+    """a Probe offered by L2 in the first cycle of sIso, not taken (held), answered after the reset"""
+    st = w['ctl_st']
+    for d in transitions(st, S_DRAIN, S_ISO, start):
+        if w['lb_v'][d] == 1 and w['lb_r'][d] == 0 and w['hold_probe'][d] == 1:
+            ends = transitions(st, S_RELEASE, S_IDLE, d)
+            if not ends:
+                continue
+            acks = [i for i in range(ends[0], w.n) if w['lc_v'][i] == 1 and w['lc_r'][i] == 1 and w['lc_op'][i] in (4, 5)]
+            if not acks:
+                continue
+            return (True, 'Probe offered in the first cycle of sIso (sample %d), ProbeAck at %d' % (d, acks[0]),
+                    d - 40, acks[0] + 25, d)
+    return False, 'no Probe offered in the first cycle of sIso and answered after the reset', 0, 0, None
+
+
+CHECKS = {'full1': find_full1, 'case4': find_case4, 'case5': find_case5, 'case6': find_case6}
 
 
 def main(argv):
@@ -243,7 +259,7 @@ def main(argv):
         for i, s in enumerate(st):
             if s != last:
                 print('sample %5d  cyc_tb %s  state %s' % (i, w['cyc_tb'][i],
-                                                          STATE_NAMES[s] if s is not None and s < 5 else s))
+                                                          STATE_NAMES[s] if s is not None and s < 6 else s))
                 last = s
         return 0
     print(__doc__)

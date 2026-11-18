@@ -34,8 +34,8 @@ def section2(C):
     s.append(P('TileLink — протокол шины из rocket-chip. Связь «клиент → менеджер» (здесь: кэш L1 → L2) состоит из пяти '
                'независимых каналов, у каждого свой valid/ready. TL-UL — только A и D (простые чтения и записи); TL-C — '
                'все пять, с кэшируемыми копиями и правами N (нет), B (чтение), T (запись). Приоритет каналов: '
-               '«A &lt; B &lt; C &lt; D &lt; E» [TL 1.8.1 2.2, с. 12], и ответ всегда идёт по каналу с более высоким '
-               'приоритетом, чем запрос [TL 1.8.1 5.1, с. 30]: ответ на Probe (C) не может ждать канала A.'))
+               '«A &lt; B &lt; C &lt; D &lt; E» [@2.2], и ответ всегда идёт по каналу с более высоким '
+               'приоритетом, чем запрос [@5.1]: ответ на Probe (C) не может ждать канала A.'))
     s.append(table([
         ['Канал', 'Направление', 'Сообщения, которые встречаются здесь'],
         ['A', 'ядро → L2', 'Get, PutFullData (ICache, PTW, MMIO); AcquireBlock / AcquirePerm (промах DCache); '
@@ -48,73 +48,44 @@ def section2(C):
     ], [0.6, 1.1, 4.0]))
     s.append(Spacer(1, 4))
     s.append(P('Транзакция завершена, только когда прошли все её сообщения: запрос требует ответа, Grant — одновременно '
-               'ответ и запрос [TL 1.8.1 5.1, с. 29]. Гейт считает именно эти пары (счётчики внутри `quiet`):'))
+               'ответ и запрос [@5.1]. Гейт считает именно эти пары (счётчики внутри `quiet`):'))
     s.append(table([
         ['Пара', 'Что значит незавершённость', 'Счётчик гейта'],
         ['запрос A → ответ D', 'менеджер (L2, MMIO-мост) обрабатывает запрос, ответ придёт в ядро', '`reqs`'],
-        ['Grant → GrantAck', 'MSHR L2 ждёт подтверждения; до GrantAck L2 не шлёт Probe по этой строке [TL 1.8.1 9.2, с. 68]',
+        ['Grant → GrantAck', 'MSHR L2 ждёт подтверждения; до GrantAck L2 не шлёт Probe по этой строке [@9.2]',
          '`grants`'],
-        ['Probe → ProbeAck', 'MSHR L2 ждёт ответа L1, чтобы ответить на снуп HN или вытеснить строку [TL 1.8.1 9.2, с. 67]',
+        ['Probe → ProbeAck', 'MSHR L2 ждёт ответа L1, чтобы ответить на снуп HN или вытеснить строку [@9.2]',
          '`probes`'],
         ['Release → ReleaseAck', 'L2 записывает данные и директорию; до ReleaseAck DCache не отвечает на Probe к этой строке и '
-         'не шлёт по ней Acquire [TL 1.8.1 9.2, с. 69]', '`releases`'],
+         'не шлёт по ней Acquire [@9.2]', '`releases`'],
     ], [1.2, 3.8, 0.9]))
     s.append(Spacer(1, 4))
-    s.append(P('<b>Отчёт NtoN.</b> ProbeAck несёт параметр из категорий Shrink или Report [TL 1.8.1 9.3.5, табл. 36, с. 76]: '
-               'Shrink — права уменьшились (TtoB, TtoN, BtoN), Report — не изменились, ответ лишь сообщает текущие (TtoT, '
-               'BtoB, NtoN) [TL 1.8.1 9.1.4, табл. 31, с. 65–66]. NtoN значит «прав нет». Probe с уровнем выше, чем права '
-               'клиента, законен и прав не меняет [TL 1.8.1 9.3.3, с. 74], поэтому клиент без копии на любой Probe '
-               'отвечает NtoN. NtoN от клиента, которого директория ещё числит владельцем, бывает и в обычной работе — в '
-               'гонке Release и Probe [TL 1.8.1 9.2, с. 69] (ProbeAck NtoN законен). Этим ответом пользуется гейт в режиме '
-               'FULL. В Release и ReleaseData NtoN запрещён [TL 1.9.3 9.3.10, с. 81], [TL 1.9.3 9.3.11, с. 82], в '
-               'ProbeAckData — тоже [TL 1.9.3 9.3.6, с. 79].'))
-    s.append(P('<b>Многотактные сообщения.</b> Сообщения с данными строки (GrantData, ProbeAckData, ReleaseData, AccessAckData) '
-               'идут двумя beat по 32 Б; на MMIO-рёбрах шина 8 Б. Beat-ы разных сообщений в канале не перемежаются '
-               '[TL 1.8.1 4, с. 18], [TL 1.8.1 4.2, с. 21]. `edge.firstlast(канал)` из rocket-chip даёт `first` и `last`.'))
-    s.append(P('<b>Удержание канала.</b> Пока `ready` = 0, beat не принят: «If ready is LOW, the receiver must not process the '
-               'beat and the sender must not consider the beat processed.» [TL 1.8.1 4.1, с. 18]. Получатель может держать '
-               'так beat долго, но не бесконечно: предложенный beat должен когда-нибудь быть принят [TL 1.8.1 5, с. 28]. '
-               'Так ждёт Probe с KEEP, пока ядро в сбросе. Отправитель же может снять `valid` непринятого beat-а: «a sender may '
-               'raise valid and then lower it on the following cycle, even if the message was not accepted on the previous '
-               'cycle.» [TL 1.8.1 4.1, с. 19] — так гейт закрывает канал A и снимает Probe к ядру (`holdB`).'))
-    s.append(P('Пункты спецификации TileLink, на которые ссылается документ (номера разделов — по версии 1.9.3; тексты цитат — по спецификации, как они приведены в документе v4: текст 1.9.3 в этой среде не проверялся):'))
+    s.append(P('<b>Отчёт NtoN.</b> ProbeAck несёт параметр Shrink или Report [@9.3.5], [@9.1.4]: Shrink — права уменьшились (TtoB, TtoN, BtoN), Report — не изменились '
+               '(TtoT, BtoB, NtoN). NtoN значит «прав нет». Probe с уровнем выше, чем права клиента, законен и прав не меняет [@9.3.3] (спецификация: «Probing Master Agents to cap their '
+               'permissions at a more permissive level than they currently have is allowed»), поэтому клиент без копии на любой Probe отвечает NtoN. Этим ответом пользуется гейт в режиме FULL. '
+               'В ProbeAckData NtoN не бывает [@9.3.6], в Release и ReleaseData — тоже [@9.3.10].'))
+    s.append(P('<b>Многотактные сообщения.</b> Сообщения с данными строки (GrantData, ProbeAckData, ReleaseData, AccessAckData) идут двумя beat по 32 Б; на MMIO-рёбрах шина 8 Б. '
+               'Beat-ы разных сообщений в канале не перемежаются [@4], [@4.1]. `edge.firstlast(канал)` из rocket-chip даёт `first` и `last`.'))
+    s.append(P('<b>Удержание канала.</b> Пока `ready` = 0, beat не принят [@4.1]. Получатель может держать так beat долго, но не бесконечно: предложенный beat должен когда-нибудь быть принят [@5] '
+               '(правило 3.i). Так ждёт Probe в KEEP, пока ядро в сбросе. Отправитель может снять `valid` непринятого beat-а (в DESIGN: «retract a beat» [@5.1]) — так гейт закрывает A и снимает Probe к ядру (`holdB`).'))
+    s.append(P('На какие пункты TileLink 1.9.3 опирается каждый механизм (по DESIGN 7.1):'))
     s.append(table([
-        ['Пункт', 'Текст спецификации', 'Где'],
-        ['[TL 1.8.1 2.2, с. 12] приоритет каналов', '«The prioritization of messages across channels is A &lt; B &lt; C &lt; D '
-         '&lt; E, in order of increasing priority.»', '2.1'],
-        ['[TL 1.8.1 3.2.2, с. 14] сброс', '«Before deasserting reset, a_valid, c_valid, and e_valid must be driven LOW by the '
-         'master, while b_valid and d_valid must be driven LOW by the slave.» «The valid signals must be driven LOW for at '
-         'least 100 cycles while reset is asserted.» «Ready, control, and data signals are free to take any value during '
-         'reset.»', '1.6, 4.4'],
-        ['[TL 1.8.1 3.2.3, с. 14] пересечение доменов', '«a TileLink-to-TileLink adapter is needed which acts as a slave in one '
-         'domain and a master in the other domain.» «It is highly recommended that a crossing carefully coordinates with the '
-         'rest of the SoC to ensure that there are no unanswered TileLink requests when one half of the crossing is reset or '
-         'depowered.»', '1, 4.3, 6.1'],
-        ['[TL 1.8.1 4, с. 18] управление потоком', '«It is forbidden in TileLink to interleave the beats of different messages '
-         'on a channel.»', '1, 2.1'],
-        ['[TL 1.8.1 4.1, с. 18–19] ready / valid', '«If ready is LOW, the receiver must not process the beat and the sender must '
-         'not consider the beat processed.» «Note that a sender may raise valid and then lower it on the following cycle, even '
-         'if the message was not accepted on the previous cycle.»', '1.5, 4.4, 6.1'],
-        ['[TL 1.8.1 5, с. 28] свобода от взаимных блокировок', 'правило 2: «Agents must eventually present all beats of a '
-         'received message»; правило 3: «Unless they have a higher priority message in flight or unanswered» — 3.i «Agents '
-         'must eventually accept a presented beat», 3.ii «Agents must eventually answer a received request message»',
-         '1.4, 4.4'],
-        ['[TL 1.8.1 5.1, с. 29–30] термины', '«A request message requires a response message.» «Notice that Grants are both '
-         'request and response messages.»', '1, 2.1'],
-        ['[TL 1.8.1 6.4, с. 43] идентификаторы', '«Each outstanding request identifier of a channel in a particular link must be '
-         'unique»', '1, 4.2, 4.3'],
-        ['[TL 1.8.1 9.2, с. 67–69] транзакции TL-C', '«The slave waits to receive a ProbeAck for every Probe that was sent.» '
-         '«Once the Grant is issued, the slave should not issue Probes on that block until it receives a GrantAck.» '
-         '«Masters must continue to process and respond to Probes even with an outstanding Grant pending in the network.» '
-         '«The slave must accept the voluntary Release as well as any overtaken ProbeAcks»', '1.3, 2.1, 6.1'],
-        ['[TL 1.8.1 9.3.3, с. 74] Probe', '«Probing Master Agents to cap their permissions at a more permissive level than they '
-         'currently have is allowed, and does not result in a permissions change.»', '2.1'],
-        ['[TL 1.8.1 9.3.5, табл. 36, с. 76] ProbeAck', '«A ProbeAck message is a response message used by a Master Agent to '
-         'acknowledge the receipt of a Probe.» c_param: «Shrink or Report (TtoB, TtoN, BtoN, TtoT, BtoB, NtoN).»',
-         '1.3, 6.1'],
-        ['[TL 1.8.1 9.3.9, с. 79] GrantAck', '«The GrantAck response message is used by the Master Agent to provide a final '
-         'acknowledgment of transaction completion»', '4.2'],
-    ], [1.5, 3.6, 0.7]))
+        ['Механизм', 'Правило', 'Пункт'],
+        ['Сброс одной стороны связи через адаптер (гейт), без запросов без ответа в момент сброса', 'нужен TileLink-to-TileLink адаптер; «ensure that there are no unanswered TileLink requests when one half of the crossing is reset»', '[@3.2.3]'],
+        ['Сброс ≥ 100 тактов, valid = 0; valid можно поднять после первого фронта без сброса', '`rstCycles` ≥ 100; гейт держит `b.valid`, `d.valid` к ядру в 0 от sIso до конца sRelease', '[@3.2.2]'],
+        ['Установка сброса асинхронная, снятие синхронное', '`ResetGen`', '[@3.2]'],
+        ['Закрытие A только на границе сообщения', 'beat-ы разных сообщений не перемежаются; начатый burst доводится', '[@4], [@4.1], [@5] (правило 2)'],
+        ['Снятие `b.valid` к ядру и `b.ready` к L2 в первом такте sDrain', 'отправитель вправе снять valid непринятого beat-а; ready = 0 — beat не принят', '[@4.1], [@5.1]'],
+        ['Probe, принятый в последнем такте sQuiesce, обязан получить ProbeAck до сброса', 'агент отвечает на принятый запрос; менеджер ждёт ProbeAck на каждый Probe', '[@5] (правило 3.ii), [@9.2]'],
+        ['Grant → GrantAck до сброса (счётчик `grants`)', 'Grant — и ответ, и запрос', '[@9.3.9], [@5]'],
+        ['Release → ReleaseAck до сброса (счётчик `releases`)', 'идентификатор занят до ответа', '[@6.4]'],
+        ['A закрыт, C / D / E идут', 'приоритет каналов A < B < C < D < E', '[@2.2]'],
+        ['Удержание Probe (KEEP; sDrain / sIso в FULL)', 'предложенный beat должен быть принят «eventually» — длительность не ограничена, но конечна', '[@5] (правило 3.i)'],
+        ['`ProbeAck NtoN` от гейта (FULL)', 'ProbeAck несёт Shrink или Report; NtoN — Report; `source`, `address`, `size` — из Probe, `corrupt` = 0', '[@9.3.5], [@9.1.4]'],
+        ['Probe к клиенту без прав законен и прав не меняет', '«Probing Master Agents to cap their permissions at a more permissive level than they currently have is allowed»', '[@9.3.3]'],
+        ['Нет ProbeAckData с NtoN', 'гейт данных не шлёт', '[@9.3.6]'],
+        ['Клиент обязан вернуть грязные данные (нарушается в FULL, 9.1)', '«master agents that cache blocks of data must always restore permissions to their slave upon request»; менеджер помнит «data not valid» до ReleaseData / ProbeAckData', '[@4.4], [@9.3.2]'],
+    ], [2.0, 3.0, 0.8]))
     s.append(P('<b>Diplomacy.</b> Механизм rocket-chip, которым соединяются TileLink-узлы: `a := b` создаёт ребро, параметры '
                'согласуются автоматически. `TLAdapterNode` — узел-адаптер, вставляемый в ребро; на нём построены гейт и '
                '`TLResetIsolation`. Без `EnableCoreReset` рёбра соединяются строками upstream дословно: `if (EnableCoreReset) a := gate := b else a := b`, '

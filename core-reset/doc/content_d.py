@@ -2,6 +2,7 @@
 from reportlab.platypus import PageBreak, Spacer
 
 from pdflib import H, P, bullets, numbered, table, box, cap, text_block, S
+import waves
 
 ND = 'нет данных'
 
@@ -38,7 +39,7 @@ MUT = {
     'CTRL_MUTANT_NO_DRAIN': 'sDrain → sIso без ожидания флагов и тишины',
     'CTRL_MUTANT_STALE_QUIET': 'решение по `quiet` прошлого такта (Probe последнего такта sQuiesce проскакивает)',
     'CTRL_MUTANT_NO_L1_IDLE': 'контроллер игнорирует `l1.idle` (ожидаемо эквивалентен в моделировании)',
-    'CTRL_MUTANT_NO_ALIVE': 'sRelease не ждёт `alive` DCache (в моделировании эквивалентен: alive и frontend выходят в одном порядке)',
+    'CTRL_MUTANT_NO_ALIVE': 'sRelease не ждёт `alive` DCache (в моделировании ожидаемо эквивалентен)',
     'CTRL_MUTANT_NO_FE_WAIT': 'sRelease не ждёт выхода frontend из сброса',
     'CTRL_MUTANT_NO_EARLY_QUIET': 'выход из sQuiesce без тишины ранних гейтов',
     'CTRL_MUTANT_NO_EARLY_BLOCK': 'A некогерентных закрывается только с sDrain',
@@ -365,7 +366,7 @@ def section74(C):
         s.append(table(rows, [1.5, 2.3, 0.5, 0.5, 0.6, 0.4], size=None))
         s.append(cap('Мутанты регрессии: пойманных прогонов / всего. Суффикс `+NO_CTRL_ASSERT` в имени — assert-ы контроллера выключены (иначе их ловит assert, а не проверка стенда); «Q_» = `QUIESCE_MUTANT_`.'))
         ee = r['equiv']
-        s.append(P('<b>Ожидаемо эквивалентные в моделировании</b> (замороженный список): %s. В формальной части оба ловятся (P19; P22, P20). Список заморожен решением пользователя и не расширялся. '
+        s.append(P('<b>Ожидаемо эквивалентные в моделировании</b> (замороженный список): %s. `NO_L1_IDLE`: при текущей DCache после `done` занятым может быть только путь Probe, а каждый Probe считает гейт, поэтому `l1.idle` избыточен (HANDOFF_v5 §4.4). `NO_ALIVE`: в RTL frontend последний в цепочке ResetGen, поэтому ожидание frontend покрывает `alive`. Формально оба ловятся (P19; P20, P22), потому что среда допускает любой порядок. Список заморожен решением пользователя и не расширялся. '
                    'Прогонов: %d, PASS: %d.' % (
                        ', '.join('`%s`' % x for x in sorted(ee)), sum(sum(a['runs'] for a in d.values()) for d in ee.values()), sum(sum(a['ok'] for a in d.values()) for d in ee.values()))))
         s.append(P('<b>+FORMALONLY.</b> `CTRL_MUTANT_NO_REQ_IN_ISO` при `isoCycles` = 1 в моделировании <b>не виден по построению</b>: блокировка DCache снимается через такт после `l1.req`, то есть уже в sReset '
@@ -520,8 +521,8 @@ def section77(C):
         ['SCEN 1–9, первые прогоны: <b>устаревшая директория</b> — запись L2, помеченная `stale` после сброса FULL, обязана быть исключена из точной проверки директории до перезаписи Grant-ом', 'смоук стенда (ecbaed6)', 'ошибка модели: проверка исправлена, запись остаётся stale до Grant'],
         ['<b>Собственный ProbeAck гейта</b>, пережившая последовательность (`ackPending`, медленный `c_ready`), считался транзакцией ядра в S1 точки сброса', 'смоук стенда', 'ошибка стенда: это сообщение гейта (DESIGN 3), S1 его не считает'],
         ['SCEN 6 случай 8 снимал запрос до ожидания снупа; SCEN 9 «подъём в sRelease» ожидал один сброс вместо двух', 'смоук стенда', 'сценарии исправлены; <b>новая проверка S12</b> (запрос высок в `coreUp` ⇒ не sIdle) — она ловит `BUSY_GAP`, молчавший до неё'],
-        ['`PmemRanges`: DCache проверяет assert-ом (`DCacheWrapper.scala:1802`), что адрес каждого Acquire лежит в `PmemRanges` (бит 31 и ниже 2^43); адреса стенда лежали вне', 'RTL-тест (assert Chisel-кода)', 'ошибка стенда: адресное пространство `rtl_l2` / драйвера перенесено'],
-        ['K11: <b>`source` в ProbeAck</b>. Проверка требовала source Probe; DCache отвечает через WritebackQueue, где source — идентификатор записи', 'RTL-тест', 'ошибка стенда: допустим source Probe либо id записи write-back (текст проверки в `rtl_l2.sv`)'],
+        ['`PmemRanges`: DCache проверяет assert-ом (`DCacheWrapper.scala` ~1802 — assert на адрес `bus.a`), что адрес каждого запроса к L2 лежит в `PmemRanges`; адреса стенда лежали ниже 0x8000_0000', 'RTL-тест (assert Chisel-кода)', 'ошибка стенда: добавлено смещение базы адресов'],
+        ['K11: <b>`source` в ProbeAck</b>. Проверка требовала source Probe (`b_source`). Настоящая DCache отвечает ProbeAck с source записи WritebackQueue (`WritebackQueue.scala:226–252`, `fromSource = io.id`), а не `b_source`; таблица 36 спецификации требует копировать `b_source`. CoupledL2 находит MSHR по адресу, поэтому модель L2 принимает любой из двух. Сам гейт копирует `b_source`', 'RTL-тест', 'ошибка стенда: модель L2 принимает source Probe либо id записи writeback; расхождение DCache с таблицей 36 — наблюдение, не исправлялось'],
         ['<b>D13: поток load</b> продолжался после выхода ядра из сброса и перезаполнял L1D — проверка «L1D пуста после сброса» в FULL видела чужую строку', 'RTL-тест (4a6113e)', 'ошибка стенда: поток останавливается в точке сброса'],
         ['<b>D7 дважды</b>. (1) Запрос поднимался, пока массив тегов ещё чистил себя после сброса (`TagSRAMBank.rst_cnt`, около 256 тактов): store не был принят, Acquire не существовало — случай ничего не доказывал (2a456c6). (2) После исправления триггер «по replay» не срабатывал, потому что store-промах под WFI ответа replay не получает (5c67d43)', 'RTL-тест', 'случай привязан к приёму store + 20 тактов; стенд проваливает случай, если Acquire ушёл раньше'],
         ['K8 в KEEP: Probe, удержанный через сброс, при доставке вправе забрать сохранённую строку (ProbeAckData TtoN с данными до сброса); сравнение с директорией на момент сброса давало ложное расхождение', 'RTL-тест (743c728)', 'K8 ждёт тишины L2 и сравнивает с текущей директорией; строка, потерянная без Probe, всё ещё в директории и всё ещё падает'],
@@ -537,4 +538,34 @@ def section77(C):
     ], [3.2, 0.9, 1.7]))
     s.append(P('Ревью дизайна v6 (Fable high, находка 1, major): `AcquirePerm BtoT` при попадании в BRANCH тоже даёт `MakeUnique`, и FULL теряет не только записи ядра, но и закоммиченную запись другого харта — раздел 9.1. '
                'Остальные находки (опустошение настоящей DCache, идентичность RTL, `isoCycles ≥ 3` в KEEP, место блока freeze) вошли в дизайн и в тесты 7.1, 7.5.'))
+    return s
+
+
+def section78(C):
+    s = [H(2, '7.8. Временные диаграммы из VCD')]
+    s.append(P('Диаграммы нарисованы по VCD реальных прогонов testbench моделей (`core-reset/doc/make_waves.sh`: сборка Verilator с трассировкой, разбор VCD — `vcd.py`, отрисовка — `waves.py`). '
+               'Окна по тактам находятся автоматически по событиям (состояние контроллера, handshake Probe), не заданы числами. Модель DCache уменьшена (4 набора × 2 пути).'))
+    av = waves.available()
+    missing = [k for k, v in av.items() if not v]
+    if missing:
+        s += box('Нет данных для временных диаграмм', ['Файлы VCD не построены: ' + ', '.join('`%s`' % m for m in missing) +
+                 '. Запустите `core-reset/doc/make_waves.sh` (когда ничего другого не собирается и не моделируется) и пересоберите документ.'], 'bad')
+    items = [
+        ('Диаграмма 1. FULL, сценарий 1, seed 1: вся последовательность', waves.wave1, 'w1_full_scen1.vcd', 'полной последовательности'),
+        ('Диаграмма 2. KEEP, сценарий 6, seed 1: Probe принят в последнем такте sQuiesce', waves.wave2, 'w2_keep_case5.vcd', 'случая 5'),
+        ('Диаграмма 3. KEEP, сценарий 6, seed 1: Probe в первом такте sDrain держится через sIso и sReset', waves.wave3, 'w3_keep_case4.vcd', 'случая 4'),
+        ('Диаграмма 4. Опережение изоляции и момент установки сброса (тот же сброс)', waves.wave4, 'w3_keep_case4.vcd', 'случая 4'),
+    ]
+    for title, fn_, fname, what in items:
+        s.append(H(3, title))
+        r = None
+        try:
+            r = fn_()
+        except Exception:
+            r = None
+        if r:
+            s.append(r[0])
+            s.append(cap('Построено по `%s`; %s.' % (fname, r[1])))
+        else:
+            s.append(P('Нет данных: файл `%s` отсутствует или в нём нет %s.' % (fname, what)))
     return s

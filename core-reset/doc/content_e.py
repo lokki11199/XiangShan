@@ -153,15 +153,14 @@ def section10(C):
         ['Проверка', 'P1–P20, 5 миттеров, сценарии 1–7, VCD-диаграммы', 'P1–P25, `fv_adapters`, 8 миттеров, сценарии 1–9, RTL-тест DCache, тест тайла, идентичность RTL'],
         ['Конфигурации проверки', 'KEEP, SWEEP', 'FULL, CFG_KEEP, ISO2, CFG_KEEP+ISO2'],
     ], [1.3, 2.1, 2.5]))
-    s.append(P('<b>Временные диаграммы из VCD</b> (раздел 7.4 документа v5) в этой редакции не включены: сборка трассируемого testbench модели v6 не выполнялась; скрипт `core-reset/doc/make_waves.sh` остался от v5. '
-               'Вместо них — нарисованные диаграммы автомата и опережения изоляции (рис. 3, 5, 9).'))
+    s.append(P('<b>Временные диаграммы из VCD</b> (раздел 7.8) строятся скриптами `make_waves.sh`, `vcd.py`, `waves.py`, адаптированными к моделям v6; если VCD не построены, раздел 7.8 говорит «нет данных». Нарисованные диаграммы автомата и опережения изоляции — рис. 3, 5, 9.'))
     s.append(P('<b>Состав пакета</b> (ветка `core-reset-v6`):'))
     s.append(table([
         ['Путь', 'Что это'],
         ['`src/main/scala/...`', '16 изменённых и новых файлов XiangShan (раздел 3); CoupledL2 и подмодули не менялись; `core-reset.patch` = `git diff 7b16188 HEAD --ignore-submodules -- src/`'],
         ['`core-reset/DESIGN.md`, `review/DESIGN_review_1.md`', 'дизайн v6 (редакция 2) и независимое ревью с решениями пользователя'],
         ['`core-reset/xscore_reset_v6.pdf`', 'этот документ'],
-        ['`core-reset/doc/`', 'генератор: `make_pdf.py`, `content_a…e.py`, `pdflib.py`, `diagrams.py`, `results.py`; от v5 остались `waves.py`, `vcd.py`, `make_waves.sh` (не используются)'],
+        ['`core-reset/doc/`', 'генератор: `make_pdf.py`, `content_a…e.py`, `pdflib.py`, `diagrams.py`, `results.py`; `waves.py`, `vcd.py`, `make_waves.sh` (диаграммы из VCD, раздел 7.8)'],
         ['`core-reset/verification/TESTPLAN.md`, `TESTPLAN_deviations.md`', 'архитектура проверки v6 и отклонения от неё'],
         ['`core-reset/verification/model/`, `tb/`', 'модели контроллера, гейтов, изоляции, DCache, L2; тестбенч и мониторы'],
         ['`core-reset/verification/formal/`', '`fv_boundary.sv` (P1–P25), `fv_adapters.sv`, `eq_chisel.sv`, `run_formal.sh`, `run_equiv.sh`'],
