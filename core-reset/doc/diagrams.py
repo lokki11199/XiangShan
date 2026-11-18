@@ -89,7 +89,7 @@ def tile_structure():
     for y, t1, t2, fl in items:
         c.box(8, y, 134, 31, [t1, t2], fill=fl, fs=6.6)
     c.box(8, 76, 134, 58, ['DCache (L1D): MainPipe, MissQueue,', 'WritebackQueue, ProbeQueue,',
-                           'DCacheFlushUnit', '(метки и состояние: сброс тайла (KEEP))'], fill=F_BLUE, stroke=BLUE,
+                           'DCacheQuiesceUnit', '(KEEP: meta, error, теги — сброс тайла)'], fill=F_BLUE, stroke=BLUE,
           fs=6.4, bold=True)
     # gates
     gx, gw = 188, 92
@@ -98,7 +98,7 @@ def tile_structure():
              (140, 'TLResetIsolation', 'ребро icachectrl', F_PURPLE)]
     for y, t1, t2, fl in gates:
         c.box(gx, y, gw, 31, [t1, t2], fill=fl, stroke=ORANGE if fl == F_ORANGE else PURPLE, fs=6.8, bold=True)
-    c.box(gx, 76, gw, 58, ['гейт l1d', 'TL-C: A, B, C, D, E', 'A закрыт с sDrain,', 'B: держит / отвечает'],
+    c.box(gx, 76, gw, 58, ['гейт l1d', 'TL-C: A, B, C, D, E', 'A закрыт с sDrain,', 'B: держит / отвечает (FULL)'],
           fill=F_ORANGE, stroke=ORANGE, fs=6.8, bold=True)
     c.text(gx + gw / 2, 328, 'домен тайла: гейты', 7.2, 'middle', ORANGE, True)
     # L2Top
@@ -124,9 +124,9 @@ def tile_structure():
     c.arrow(gx + gw, 105, 330, 280, BLUE, both=True)
     c.arrow(330, 155, gx + gw, 155, BLUE)
     # controller
-    c.box(104, 2, 270, 62, ['CoreResetCtrl (домен тайла)', 'sIdle → sFlush → sDrain → sReset → sRelease',
-                            'выходы: earlyBlock, gateBlock, holdProbe, ackProbe,', 'isolate, coreReset, l1.req, l1.freeze',
-                            'входы: req, earlyQuiet, gatesQuiet, l1.done / idle / alive,', 'resetInFrontend'],
+    c.box(104, 2, 270, 62, ['CoreResetCtrl (домен тайла)', 'sIdle → sQuiesce → sDrain → sIso → sReset → sRelease',
+                            'выходы: earlyBlock, gateBlock, holdProbe, ackProbe,', 'isolate, coreReset, l1.req, l1.freeze, busy',
+                            'входы: req (3 синхронизатора), earlyQuiet, gatesQuiet,', 'l1.done / idle / alive, resetInFrontend'],
           fill=F_RED, stroke=RED, fs=6.0, bold=True)
     c.arrow(234, 64, 234, 76, RED, both=True)
     c.text(240, 67, 'block, holdB, ackB, isolate ↑  quiet ↓', 5.6, 'start', RED)
@@ -142,85 +142,85 @@ def tile_structure():
 
 
 # ------------------------------------------------------------------------------------------------ CoreResetCtrl FSM
+def _circle(c, cx, cy, n):
+    from reportlab.graphics.shapes import Circle
+    c.d.add(Circle(cx, cy, 5.2, fillColor=colors.white, strokeColor=INK, strokeWidth=0.7))
+    c.text(cx, cy - 2, str(n), 6.4, 'middle', INK, True)
+
+
 def fsm_ctrl():
-    W, H = CONTENT_W, 196
+    W, H = CONTENT_W, 250
     c = Cv(W, H)
-    bw, gap = 78, 23
-    xs = [4 + i * (bw + gap) for i in range(5)]
-    names = ['sIdle', 'sFlush', 'sDrain', 'sReset', 'sRelease']
-    sub = [['ядро работает'],
-           ['A некогерентных', 'закрыт; DCache:', 'опустошение (KEEP)', 'или обход (sweep);', 'B открыт'],
-           ['A l1d закрыт;', 'B закрыт', '(holdProbe);', 'решение по quiet', 'этого такта'],
-           ['coreReset, isolate,', 'freeze (KEEP);', 'B держится (KEEP)', 'или отвечает', 'гейт (sweep)'],
-           ['coreReset = 0;', 'A и B закрыты,', 'isolate = 1;', 'ждём alive и', 'frontend']]
-    fills = [F_GREEN, F_BLUE, F_ORANGE, F_RED, F_PURPLE]
-    c.text(W / 2, H - 12, 'CoreResetCtrl: 5 состояний, только уровень', 7.6, 'middle', INK, True)
-    ytop = H - 112
+    bw, gap = 66, 15
+    xs = [2 + i * (bw + gap) for i in range(6)]
+    names = ['sIdle', 'sQuiesce', 'sDrain', 'sIso', 'sReset', 'sRelease']
+    sub = [['ядро работает', 'busy = 0'],
+           ['busy = 1; A', 'некогерентных', 'закрыт; DCache:', 'опустошение;', 'B открыт'],
+           ['A l1d закрыт;', 'B держится', '(holdProbe);', 'решение по quiet', 'этого такта'],
+           ['isolate, freeze', '(KEEP) := 1;', 'сброса ещё нет;', 'l1.req = 1;', 'isoCycles тактов'],
+           ['coreReset = 1;', 'FULL: гейт', 'отвечает NtoN;', 'KEEP: Probe', 'держится'],
+           ['coreReset = 0;', 'isolate держится;', 'ждёт alive и', 'frontend']]
+    fills = [F_GREEN, F_BLUE, F_ORANGE, F_PURPLE, F_RED, F_PURPLE]
+    c.text(W / 2, H - 9, 'CoreResetCtrl: 6 состояний, только уровень', 7.6, 'middle', INK, True)
+    ytop = H - 124
     for x, n, sb, f in zip(xs, names, sub, fills):
-        c.box(x, ytop, bw, 84, [n] + sb, fill=f, stroke=GREY, fs=6.4, bold=True, top=True)
-    # numbered transitions
-    for i in range(4):
-        c.arrow(xs[i] + bw, ytop + 42, xs[i + 1], ytop + 42, INK, 1.0)
-        cx = xs[i] + bw + gap / 2
-        c.d.add(__import__('reportlab.graphics.shapes', fromlist=['Circle']).Circle(cx, ytop + 52, 5.2, fillColor=colors.white,
-                                                                                    strokeColor=INK, strokeWidth=0.7))
-        c.text(cx, ytop + 50, str(i + 1), 6.4, 'middle', INK, True)
-    # return arrow sRelease -> sIdle
+        c.box(x, ytop, bw, 90, [n] + sb, fill=f, stroke=GREY, fs=5.9, bold=True, top=True)
+    for i in range(5):
+        c.arrow(xs[i] + bw, ytop + 45, xs[i + 1], ytop + 45, INK, 1.0)
+        _circle(c, xs[i] + bw + gap / 2, ytop + 56, i + 1)
     yb = ytop - 14
-    c.line(xs[4] + bw / 2, ytop, xs[4] + bw / 2, yb, INK, 1.0)
-    c.line(xs[4] + bw / 2, yb, xs[0] + bw / 2, yb, INK, 1.0)
+    c.line(xs[5] + bw / 2, ytop, xs[5] + bw / 2, yb, INK, 1.0)
+    c.line(xs[5] + bw / 2, yb, xs[0] + bw / 2, yb, INK, 1.0)
     c.arrow(xs[0] + bw / 2, yb, xs[0] + bw / 2, ytop, INK, 1.0)
-    cx = (xs[0] + xs[4] + bw) / 2
-    c.d.add(__import__('reportlab.graphics.shapes', fromlist=['Circle']).Circle(cx, yb, 5.2, fillColor=colors.white,
-                                                                                strokeColor=INK, strokeWidth=0.7))
-    c.text(cx, yb - 2, '5', 6.4, 'middle', INK, True)
-    # legend
-    leg = ['1  запрос req (синхронизированный debug_reset или core_reset_req)',
-           '2  l1Done && earlyQuiet: DCache опустошена (и обойдена), ранние гейты тихи',
-           '3  gatesQuiet && l1Done && l1Idle — в том же такте; coreReset, hartInReset, closed := 1',
-           '4  cnt >= rstCycles (100) && !req: запрос снят, сброс не короче 100 тактов; coreReset := 0',
-           '5  l1.alive && !coreInReset: DCache и frontend вне сброса; closed := 0, hartInReset := 0 (coreReset — регистр, поднимается на фронте 3)']
-    y = yb - 15
+    _circle(c, (xs[0] + xs[5] + bw) / 2 + 40, yb, 6)
+    # sRelease -> sQuiesce
+    yc = ytop + 100
+    c.line(xs[5] + bw / 2 + 10, ytop + 90, xs[5] + bw / 2 + 10, yc, GREY, 0.9, [3, 2])
+    c.line(xs[5] + bw / 2 + 10, yc, xs[1] + bw / 2, yc, GREY, 0.9, [3, 2])
+    c.arrow(xs[1] + bw / 2, yc, xs[1] + bw / 2, ytop + 90, GREY, 0.9, [3, 2])
+    c.text((xs[1] + xs[5]) / 2 + 30, yc + 2, '7 (запрос снова поднят: busy не падает)', 6.0, 'middle', GREY)
+    leg = ['1  req: busy := 1',
+           '2  l1Done && earlyQuiet: DCache опустошена, ранние гейты тихи',
+           '3  gatesQuiet && l1Done && l1Idle в одном такте: isolate := 1',
+           '4  cnt == isoCycles - 1: coreReset := 1 (isolate уже стоял isoCycles полных тактов)',
+           '5  cnt >= rstCycles (100) && !req: coreReset := 0, releasing := 1',
+           '6  coreUp = releasing && alive && !resetInFrontend, req = 0: isolate, releasing, busy := 0;  7  то же при req = 1']
+    y = yb - 14
     for t in leg:
         c.text(4, y, t, 6.2)
-        y -= 8.6
+        y -= 8.4
     return c.d
 
 
-# ------------------------------------------------------------------------------------------------ DCacheFlushUnit FSM
-def fsm_flush():
-    W, H = 481, 128
+def fsm_quiesce():
+    W, H = 481, 118
     c = Cv(W, H)
-    xs = [6, 100, 194, 288, 382]
-    names = ['sIdle', 'sDrain', 'sSweep', 'sWait', 'sDone']
-    sub = [['ждёт quiesce.req'], ['block = 1', 'ждёт idle:', 'mq, wbq, mp, pq'], ['только sweep:', 'запрос flush на', '(набор, путь)', '1024 в SoC'],
-           ['только sweep:', 'inflight == 0', '&& idle'], ['done = 1', 'пока req = 1']]
+    xs = [10, 175, 340]
+    names = ['sIdle', 'sDrain', 'sDone']
+    sub = [['block = 0', 'ждёт quiesce.req'], ['block = 1', 'ждёт idle:', 'mq && wbq && mp && pq'], ['block = 1, done = 1', 'пока req = 1']]
     for x, n, s in zip(xs, names, sub):
-        c.box(x, 28, 90, 70, [n] + s, fill=[F_GREEN, F_ORANGE, F_BLUE, F_BLUE, F_PURPLE][xs.index(x)], fs=6.6,
-              bold=True, top=True)
-    for i in range(4):
-        c.arrow(xs[i] + 90, 63, xs[i + 1], 63, INK, 1.0)
-    c.text(xs[0] + 95, 70, 'req', 6, 'middle')
-    c.text(xs[1] + 95, 70, 'idle', 6, 'middle')
-    c.text(xs[2] + 95, 70, 'все пары', 5.6, 'middle')
-    c.text(xs[3] + 95, 70, 'пусто', 6, 'middle')
-    c.line(xs[1] + 45, 28, xs[1] + 45, 14, INK, 0.8)
-    c.line(xs[1] + 45, 14, xs[4] + 45, 14, INK, 0.8, [2, 2])
-    c.arrow(xs[4] + 45, 14, xs[4] + 45, 28, INK, 0.8)
-    c.text((xs[1] + xs[4]) / 2 + 20, 17, 'KEEP: sDrain → sDone сразу по idle (sSweep и sWait не используются)', 6, 'middle', GREY)
-    c.arrow(xs[0] + 45, 28, xs[0] + 45, 8, INK, 0.5, [1, 2])
-    c.text(W / 2, 112, 'DCacheFlushUnit: 5 состояний; idle = mq_empty && wbq_empty && mp_empty && pq_empty', 7.2,
-           'middle', INK, True)
-    c.text(xs[4] + 95, 6, '!req → sIdle из любого состояния', 5.6, 'end', GREY)
+        c.box(x, 28, 130, 56, [n] + s, fill=[F_GREEN, F_ORANGE, F_PURPLE][xs.index(x)], fs=6.8, bold=True, top=True)
+    for i in range(2):
+        c.arrow(xs[i] + 130, 56, xs[i + 1], 56, INK, 1.0)
+    c.text(xs[0] + 152, 62, 'req', 6.4, 'middle')
+    c.text(xs[1] + 152, 62, 'idle', 6.4, 'middle')
+    c.line(xs[1] + 65, 28, xs[1] + 65, 14, INK, 0.8)
+    c.line(xs[1] + 65, 14, xs[0] + 65, 14, INK, 0.8, [2, 2])
+    c.arrow(xs[0] + 65, 14, xs[0] + 65, 28, INK, 0.8)
+    c.text(xs[0] + 112, 5, '!req', 6, 'middle', GREY)
+    c.line(xs[2] + 65, 28, xs[2] + 65, 14, INK, 0.8)
+    c.line(xs[2] + 65, 14, xs[0] + 65, 14, INK, 0.8, [2, 2])
+    c.text(W / 2, 104, 'DCacheQuiesceUnit: 3 состояния; одинаков для FULL и KEEP; idle = mq_empty && wbq_empty && mp_empty && pq_empty',
+           7.0, 'middle', INK, True)
     return c.d
 
 
 # ------------------------------------------------------------------------------------------------ phases timeline
 def phases_timeline():
-    W, H = CONTENT_W, 235
+    W, H = CONTENT_W, 262
     c = Cv(W, H)
     x0 = 112
-    cols = [('sIdle', 50), ('sFlush', 110), ('sDrain', 44), ('sReset', 120), ('sRelease', 40)]
+    cols = [('sIdle', 36), ('sQuiesce', 70), ('sDrain', 34), ('sIso', 22), ('sReset', 110), ('sRelease', 40)]
     tot = sum(w for _, w in cols)
     sc = (W - x0 - 4) / tot
     xs = []
@@ -229,39 +229,38 @@ def phases_timeline():
         xs.append((x, w * sc, n))
         x += w * sc
     ylab = H - 15
-    for (x, w, n), fl in zip(xs, [F_GREEN, F_BLUE, F_ORANGE, F_RED, F_PURPLE]):
-        c.box(x, ylab, w, 14, n, fill=fl, fs=7, bold=True)
+    for (x, w, n), fl in zip(xs, [F_GREEN, F_BLUE, F_ORANGE, F_PURPLE, F_RED, F_PURPLE]):
+        c.box(x, ylab, w, 14, n, fill=fl, fs=6.4, bold=True)
     rows = [
-        ('A l1i, ptw, i_mmio, d_mmio', [(0, 1, 'открыт', F_GREEN), (1, 5, 'закрыт (earlyBlock)', F_RED)], 1),
-        ('A l1d', [(0, 2, 'открыт', F_GREEN), (2, 4, 'закрыт (gateBlock)', F_RED), (4, 5, '', F_RED)], 1),
-        ('B (Probe), KEEP', [(0, 2, 'открыт', F_GREEN), (2, 5, 'держится в L2 (holdProbe)', F_ORANGE)], 1),
-        ('B (Probe), sweep', [(0, 2, 'открыт', F_GREEN), (2, 3, 'держится', F_ORANGE),
-                              (3, 5, 'отвечает гейт: ProbeAck NtoN', F_PURPLE)], 1),
-        ('DCache', [(0, 1, 'работает', F_GREEN), (1, 2, 'блок; опустошение; sweep', F_BLUE),
-                    (2, 3, 'блок', F_BLUE), (3, 4, 'в сбросе', F_RED), (4, 5, 'выход', F_ORANGE)], 1),
-        ('ядро', [(0, 1, 'работает', F_GREEN), (1, 3, 'работает: не берёт новое', F_BLUE), (3, 4, 'в сбросе', F_RED),
-                  (4, 5, 'выход', F_ORANGE)], 1),
-        ('isolate, freeze (KEEP)', [(0, 3, '0', F_GREY), (3, 5, '1', F_PURPLE)], 1),
-        ('гейты: условие выхода', [(1, 2, 'done && earlyQuiet', F_GREY), (2, 3, 'quiet && done && idle', F_GREY),
-                                   (3, 4, '>= 100 && !req', F_GREY), (4, 5, 'alive, frontend', F_GREY)], 1),
+        ('A l1i, ptw, i_mmio, d_mmio', [(0, 1, 'открыт', F_GREEN), (1, 6, 'закрыт (earlyBlock = busy)', F_RED)]),
+        ('A l1d', [(0, 2, 'открыт', F_GREEN), (2, 6, 'закрыт (gateBlock)', F_RED)]),
+        ('B (Probe), FULL', [(0, 2, 'открыт', F_GREEN), (2, 4, 'держится в L2', F_ORANGE),
+                             (4, 6, 'гейт: ProbeAck NtoN', F_PURPLE)]),
+        ('B (Probe), KEEP', [(0, 2, 'открыт', F_GREEN), (2, 6, 'держится в L2 (holdProbe)', F_ORANGE)]),
+        ('DCache', [(0, 1, 'работает', F_GREEN), (1, 2, 'блок; опустошение', F_BLUE),
+                    (2, 4, 'блок (l1.req)', F_BLUE), (4, 5, 'в сбросе', F_RED), (5, 6, 'выход', F_ORANGE)]),
+        ('ядро', [(0, 1, 'работает', F_GREEN), (1, 4, 'работает, нового наружу нет', F_BLUE), (4, 5, 'в сбросе', F_RED),
+                  (5, 6, 'выход', F_ORANGE)]),
+        ('isolate; freeze (KEEP)', [(0, 3, '0', F_GREY), (3, 6, '1', F_PURPLE)]),
+        ('busy = hartInReset', [(0, 1, '0', F_GREY), (1, 6, '1', F_PURPLE)]),
+        ('условие выхода', [(1, 2, 'done && earlyQuiet', F_GREY), (2, 3, 'quiet && done && idle', F_GREY),
+                            (3, 4, 'isoCycles тактов', F_GREY), (4, 5, '>= 100 && !req', F_GREY),
+                            (5, 6, 'alive, frontend', F_GREY)]),
     ]
     y = ylab - 22
-    for label, segs, _ in rows:
-        c.text(x0 - 4, y + 5, label, 6.4, 'end')
+    for label, segs in rows:
+        c.text(x0 - 4, y + 5, label, 6.2, 'end')
         for a, b, t, fl in segs:
             xa, wa = xs[a][0], sum(xs[k][1] for k in range(a, b))
-            c.box(xa + 0.5, y, wa - 1, 18, t, fill=fl, stroke=LGREY, fs=5.9)
+            c.box(xa + 0.5, y, wa - 1, 18, t, fill=fl, stroke=LGREY, fs=5.7)
         y -= 24
-    c.text(W / 2, 4, 'sReset длится не меньше rstCycles = 100 тактов и до снятия запроса; ширина столбцов условная',
-           6, 'middle', GREY)
+    c.text(W / 2, 4, 'ширина столбцов условная; sReset длится не меньше rstCycles = 100 тактов и до снятия запроса', 6, 'middle', GREY)
     return c.d
 
 
 # ------------------------------------------------------------------------------------------------ sequence diagrams
 def sequence(title, parts, steps, H=None, colw=None):
-    """parts: names; steps: ('phase', text) | ('msg', i, j, text, color, dash) | ('note', i, text, fill)"""
     n = len(parts)
-    ys = 0
     height = 28
     for s in steps:
         height += {'phase': 16, 'msg': 14, 'note': 22, 'note2': 32}[s[0]]
@@ -294,7 +293,7 @@ def sequence(title, parts, steps, H=None, colw=None):
         elif s[0] == 'note':
             _, i, t, fl = s
             ss = t if isinstance(t, list) else [t]
-            wd = 150
+            wd = 170
             x = min(max(xs[i] - wd / 2, 4), W - wd - 4)
             c.box(x, y - 14, wd, 18, ss, fill=fl, stroke=LGREY, fs=5.8)
             y -= 22
@@ -310,68 +309,110 @@ def sequence(title, parts, steps, H=None, colw=None):
 PARTS = ['Debug Module / кластер', 'CoreResetCtrl', 'DCache (L1D)', 'гейты', 'L2 / HN']
 
 
-def seq_keep():
+def seq_full():
     S = [
-        ('phase', '1. запрос и sFlush'),
-        ('msg', 0, 1, 'debug_reset / core_reset_req = 1', BLUE, None),
-        ('msg', 1, 3, 'earlyBlock = 1: A l1i, ptw, i_mmio, d_mmio закрыт', RED, None),
-        ('msg', 1, 2, 'l1.req: блок записей, AMO, CMO и новых промахов', RED, None),
-        ('msg', 4, 2, 'Probe (канал B открыт)', GREEN, None),
-        ('msg', 2, 4, 'ProbeAck / ProbeAckData; ответы на Grant, ReleaseAck', GREEN, None),
+        ('phase', '1. запрос и sQuiesce: опустошение DCache (обхода нет)'),
+        ('msg', 0, 1, 'запрос = 1; busy = 1', BLUE, None),
+        ('msg', 1, 3, 'earlyBlock: A l1i, ptw, i_mmio, d_mmio закрыт', RED, None),
+        ('msg', 1, 2, 'l1.req: блок store, AMO, CMO, новых промахов', RED, None),
+        ('msg', 4, 2, 'Probe (B открыт); Grant, ReleaseAck для начатого', GREEN, None),
+        ('msg', 2, 4, 'ProbeAck(Data), GrantAck, Release(Data) начатое', GREEN, None),
         ('msg', 2, 1, 'l1.done; гейты: earlyQuiet', PURPLE, [2, 2]),
         ('phase', '2. sDrain: A l1d и B закрыты с первого такта; решение по quiet этого такта'),
         ('msg', 1, 3, 'gateBlock = 1, holdProbe = 1', RED, None),
         ('msg', 4, 3, 'Probe предложен: b.ready = 0, b.valid к ядру = 0', GREEN, [3, 2]),
         ('note', 3, 'gatesQuiet && l1Done && l1Idle в одном такте', F_ORANGE),
-        ('phase', '3. sReset (не меньше 100 тактов и до снятия запроса)'),
-        ('msg', 1, 1, 'coreReset, isolate, freeze := 1', RED, None),
-        ('msg', 4, 3, 'Probe к строке L1D ждёт (SourceB, снуп HN ждёт)', GREEN, [3, 2]),
-        ('note', 2, 'массивы L1D (meta, error, теги, данные) сохранены', F_BLUE),
-        ('phase', '4. sRelease и выход'),
+        ('phase', '3. sIso: изоляция включена, сброса ещё нет (isoCycles = 1 такт)'),
+        ('msg', 1, 3, 'isolate := 1: гейты и боковые сигналы зажаты', RED, None),
+        ('phase', '4. sReset (не меньше 100 тактов и до снятия запроса)'),
+        ('msg', 1, 1, 'coreReset := 1; ackProbe = 1', RED, None),
+        ('msg', 3, 4, 'ProbeAck NtoN от гейта на удержанный Probe', GREEN, None),
+        ('note', 2, 'L1D пуста: грязные строки потеряны (7.2)', F_BLUE),
+        ('phase', '5. sRelease и выход'),
         ('msg', 1, 1, 'coreReset := 0; ждёт alive и frontend', RED, None),
-        ('msg', 1, 3, 'closed := 0: гейты открыты', RED, None),
+        ('msg', 1, 3, 'isolate := 0: гейты открыты; busy = 0', RED, None),
+        ('msg', 2, 4, 'первые обращения ядра — промахи; L2 отдаёт свои данные', GREEN, None),
+    ]
+    return sequence('Последовательность FULL (CoreResetKeepL1 = false, по умолчанию)', PARTS, S)
+
+
+def seq_keep():
+    S = [
+        ('phase', '1. запрос и sQuiesce: опустошение DCache (обхода нет)'),
+        ('msg', 0, 1, 'запрос = 1; busy = 1', BLUE, None),
+        ('msg', 1, 3, 'earlyBlock: A некогерентных закрыт', RED, None),
+        ('msg', 1, 2, 'l1.req: блок store, AMO, CMO, новых промахов', RED, None),
+        ('msg', 4, 2, 'Probe (B открыт) → ProbeAck(Data)', GREEN, None),
+        ('msg', 2, 1, 'l1.done; гейты: earlyQuiet', PURPLE, [2, 2]),
+        ('phase', '2. sDrain'),
+        ('msg', 1, 3, 'gateBlock = 1, holdProbe = 1', RED, None),
+        ('msg', 4, 3, 'Probe предложен: b.ready = 0, b.valid к ядру = 0', GREEN, [3, 2]),
+        ('note', 3, 'gatesQuiet && l1Done && l1Idle в одном такте', F_ORANGE),
+        ('phase', '3. sIso: isolate и freeze := 1'),
+        ('msg', 1, 2, 'freeze: запись, чтение SRAM = 0', RED, None),
+        ('phase', '4. sReset (не меньше 100 тактов и до снятия запроса)'),
+        ('msg', 1, 1, 'coreReset := 1; meta, error, теги — на сбросе тайла: целы', RED, None),
+        ('msg', 4, 3, 'Probe к строке L1D ждёт (SourceB; снуп HN ждёт)', GREEN, [3, 2]),
+        ('note', 2, 'строки L1D сохранены (meta, error, tag, data)', F_BLUE),
+        ('phase', '5. sRelease и выход'),
+        ('msg', 1, 1, 'coreReset := 0; ждёт alive и frontend', RED, None),
+        ('msg', 1, 3, 'isolate := 0: гейты открыты', RED, None),
         ('msg', 3, 2, 'Probe доходит до DCache', GREEN, None),
         ('msg', 2, 4, 'ProbeAckData из «горячей» L1D', GREEN, None),
     ]
     return sequence('Последовательность KEEP (CoreResetKeepL1 = true)', PARTS, S)
 
 
-def seq_sweep():
-    S = [
-        ('phase', '1. запрос и sFlush: опустошение и обход L1D'),
-        ('msg', 0, 1, 'debug_reset / core_reset_req = 1', BLUE, None),
-        ('msg', 1, 3, 'earlyBlock = 1: A некогерентных закрыт', RED, None),
-        ('msg', 1, 2, 'l1.req: блок; затем обход 1024 пар (набор, путь)', RED, None),
-        ('msg', 2, 4, 'Release / ReleaseData (TtoN, BtoN) по каждой строке', GREEN, None),
-        ('msg', 4, 2, 'ReleaseAck; директория L2: бит клиента снят', GREEN, None),
-        ('msg', 2, 1, 'l1.done (все ReleaseAck получены); earlyQuiet', PURPLE, [2, 2]),
-        ('phase', '2. sDrain'),
-        ('msg', 1, 3, 'gateBlock = 1, holdProbe = 1 (первый такт)', RED, None),
-        ('note', 3, 'gatesQuiet && l1Done && l1Idle в одном такте', F_ORANGE),
-        ('phase', '3. sReset (не меньше 100 тактов и до снятия запроса)'),
-        ('msg', 1, 1, 'coreReset, isolate := 1; ackProbe = 1', RED, None),
-        ('msg', 4, 3, 'Probe (если придёт; CoupledL2 не шлёт)', GREEN, [3, 2]),
-        ('msg', 3, 4, 'ProbeAck NtoN от гейта: ответ сразу', GREEN, None),
-        ('note', 2, 'L1D пуста, ядро в сбросе, данные уже в L2', F_BLUE),
-        ('phase', '4. sRelease и выход'),
-        ('msg', 1, 1, 'coreReset := 0; ждёт alive и frontend', RED, None),
-        ('msg', 1, 3, 'closed := 0: гейты открыты; ядро работает', RED, None),
-        ('msg', 2, 4, 'первые обращения ядра — промахи; L2 отдаёт данные', GREEN, None),
-    ]
-    return sequence('Последовательность SWEEP (CoreResetKeepL1 = false)', PARTS, S)
+# ------------------------------------------------------------------------------------------------ timing of the isolation lead
+def iso_lead_timing():
+    """cycle diagram of DESIGN 2.3 (isoCycles = 1): T-1, T, T+1, T+2 ... X, X+1 ... U, U+1"""
+    W, H = CONTENT_W, 205
+    c = Cv(W, H)
+    x0, x1 = 130, W - 6
+    cols = ['T-1', 'T', 'T+1', 'T+2', '...', 'X', 'X+1', '...', 'U', 'U+1']
+    n = len(cols)
+    cw = (x1 - x0) / n
+    def X(i):
+        return x0 + cw * i
+    for i, t in enumerate(cols):
+        c.text(X(i) + cw / 2, H - 12, t, 6.6, 'middle', INK, True)
+        c.line(X(i), 6, X(i), H - 18, LGREY, 0.4)
+    c.line(X(n), 6, X(n), H - 18, LGREY, 0.4)
+    state = [(0, 2, 'sDrain', F_ORANGE), (2, 3, 'sIso', F_PURPLE), (3, 6, 'sReset', F_RED), (6, 9, 'sRelease', F_PURPLE), (9, 10, 'sIdle', F_GREEN)]
+    rows = ['state', 'gatesQuiet && done', 'isolate, freeze (рег.)', 'coreReset (рег.)', 'сброс внутри XSCore',
+            'выходы ядра', 'alive && !resetInFrontend']
+    ys = {}
+    y = H - 40
+    for r in rows:
+        ys[r] = y
+        c.text(x0 - 5, y + 3, r, 6.3, 'end')
+        y -= 24
+    for a, b, t, fl in state:
+        c.box(X(a) + 0.5, ys['state'] - 3, (b - a) * cw - 1, 14, t, fill=fl, stroke=LGREY, fs=6)
+    def lvl(r, a, b, color, lab=''):
+        c.box(X(a) + 0.5, ys[r] - 1, (b - a) * cw - 1, 9, lab, fill=color, stroke=GREY, sw=0.4, fs=5.6)
+    lvl('gatesQuiet && done', 1, 2, F_GREEN, '1')
+    lvl('isolate, freeze (рег.)', 2, 9, F_PURPLE, '1: весь такт T+1 зажимы стоят')
+    lvl('coreReset (рег.)', 3, 6, F_RED, '1')
+    lvl('сброс внутри XSCore', 3, 8, F_ORANGE, 'асинхронно ↑ ... синхронно ↓ по цепочке ResetGen')
+    lvl('выходы ядра', 3, 7, colors.HexColor('#fde3c8'), 'произвольны; зажаты')
+    lvl('alive && !resetInFrontend', 8, 9, F_GREEN, '1')
+    c.text(X(1) + cw / 2, ys['gatesQuiet && done'] - 12, 'такт решения', 5.6, 'middle', GREY)
+    c.text(X(2) + cw / 2, ys['isolate, freeze (рег.)'] - 12, 'запас isoCycles', 5.6, 'middle', GREY)
+    c.text(X(8) + cw / 2, ys['alive && !resetInFrontend'] - 12, 'isolate := 0 на фронте U → U+1', 5.6, 'middle', GREY)
+    c.text(W / 2, 1, 'isoCycles = 1; запись, зарегистрированная на такт позже s3, фиксируется на фронте T → T+1, до сброса остаётся такт T+1', 5.8, 'middle', GREY)
+    return c.d
 
 
-# ------------------------------------------------------------------------------------------------ isolation timing
 def iso_timing():
     W, H = CONTENT_W, 190
     c = Cv(W, H)
     x0, x1 = 128, W - 8
-    # time axis: 0..100 (E0..), request drops at 80% of the width, sRelease after
     def X(t):
         return x0 + (x1 - x0) * t / 100.0
-    rows = ['req (запрос)', 'состояние CoreResetCtrl', 'coreReset (регистр)', 'isolate = closed (регистр)',
+    rows = ['req (запрос)', 'состояние CoreResetCtrl', 'isolate (регистр)', 'coreReset (регистр)',
             'сброс внутри XSCore (ResetGen)', 'выходы ядра (valid, msiAck ...)', 'после изоляции: к L2 / IMSIC',
-            'freeze → запись SRAM (KEEP)']
+            'freeze → SRAM L1D (KEEP)']
     y = H - 24
     ys = {}
     for r in rows:
@@ -382,33 +423,24 @@ def iso_timing():
     def lvl(r, segs, color=BLUE, h=9):
         yy = ys[r]
         for a, b, v in segs:
-            c.box(X(a), yy - 1 + (0 if v else 0), X(b) - X(a), h if v else 1.2, fill=color if v else LGREY,
+            c.box(X(a), yy - 1, X(b) - X(a), h if v else 1.2, fill=color if v else LGREY,
                   stroke=color if v else LGREY, sw=0.4)
-    # request
     lvl('req (запрос)', [(0, 4, 0), (4, 80, 1), (80, 100, 0)], BLUE)
-    # state
     yy = ys['состояние CoreResetCtrl']
-    for a, b, t, fl in [(0, 18, 'sDrain', F_ORANGE), (18, 80, 'sReset: >= 100 тактов и до снятия запроса', F_RED),
+    for a, b, t, fl in [(0, 14, 'sDrain', F_ORANGE), (14, 18, 'sIso', F_PURPLE), (18, 80, 'sReset: >= 100 тактов и до снятия запроса', F_RED),
                         (80, 96, 'sRelease', F_PURPLE), (96, 100, 'sIdle', F_GREEN)]:
-        c.box(X(a), yy - 3, X(b) - X(a) - 0.5, 13, t, fill=fl, stroke=LGREY, fs=5.9)
+        c.box(X(a), yy - 3, X(b) - X(a) - 0.5, 13, t, fill=fl, stroke=LGREY, fs=5.7)
+    lvl('isolate (регистр)', [(0, 14, 0), (14, 96, 1), (96, 100, 0)], PURPLE)
     lvl('coreReset (регистр)', [(0, 18, 0), (18, 80, 1), (80, 100, 0)], RED)
-    lvl('isolate = closed (регистр)', [(0, 18, 0), (18, 96, 1), (96, 100, 0)], PURPLE)
-    # async reset in core: from a bit later
-    lvl('сброс внутри XSCore (ResetGen)', [(0, 20, 0), (20, 82, 1), (82, 100, 0)], ORANGE)
-    # core outputs: garbage for a while after assertion, then reset value 0
+    lvl('сброс внутри XSCore (ResetGen)', [(0, 19, 0), (19, 82, 1), (82, 100, 0)], ORANGE)
     yy = ys['выходы ядра (valid, msiAck ...)']
-    c.box(X(18), yy - 1, X(24) - X(18), 9, 'мусор', fill=colors.HexColor('#fde3c8'), stroke=ORANGE, fs=5.6)
-    c.box(X(24), yy - 1, X(82) - X(24), 1.2, fill=LGREY, stroke=LGREY, sw=0.4)
-    c.box(X(82), yy - 1, X(88) - X(82), 9, 'сброс снимается', fill=colors.HexColor('#e8e8e8'), stroke=GREY, fs=5.2)
-    lvl('после изоляции: к L2 / IMSIC', [(0, 18, 0), (18, 96, 0)], PURPLE)
-    c.text(X(57), ys['после изоляции: к L2 / IMSIC'] + 1, 'значение сброса, не зависит от ядра (valid 0, msiAck 0, ...)', 5.8,
-           'middle', PURPLE)
-    lvl('freeze → запись SRAM (KEEP)', [(0, 18, 0), (18, 96, 1)], PURPLE)
-    # vertical guides
-    for t, lab in [(18, 'E0: sDrain → sReset'), (80, 'запрос снят, cnt >= 100'), (96, 'alive && !coreInReset')]:
+    c.box(X(19), yy - 1, X(25) - X(19), 9, 'мусор', fill=colors.HexColor('#fde3c8'), stroke=ORANGE, fs=5.6)
+    c.box(X(82), yy - 1, X(88) - X(82), 9, 'выход', fill=colors.HexColor('#e8e8e8'), stroke=GREY, fs=5.2)
+    c.text(X(57), ys['после изоляции: к L2 / IMSIC'] + 1, 'значение сброса, не зависит от ядра (valid 0, msiAck 0, ...)', 5.8, 'middle', PURPLE)
+    lvl('freeze → SRAM L1D (KEEP)', [(0, 14, 0), (14, 96, 1)], PURPLE)
+    for t, lab in [(14, 'sDrain → sIso'), (18, 'coreReset ↑'), (80, 'запрос снят, cnt >= 100'), (96, 'alive && !resetInFrontend')]:
         c.line(X(t), 14, X(t), H - 22, GREY, 0.5, [2, 2])
-        c.text(X(t), 6, lab, 5.8, 'middle', GREY)
-    # brace for 100 cycles
+        c.text(X(t), 6, lab, 5.6, 'middle', GREY)
     c.line(X(18), H - 12, X(18), H - 16, INK, 0.8)
     c.line(X(18), H - 14, X(60), H - 14, INK, 0.8)
     c.text(X(39), H - 10, '>= rstCycles = 100 тактов', 6.2, 'middle', INK, True)

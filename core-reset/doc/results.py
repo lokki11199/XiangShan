@@ -135,7 +135,7 @@ def regress():
             a[0] += 1
             a[1] += passed(l)
         res['cfg'][c]['by_scen'] = sc
-    for l in mut + equiv_ + fonly:
+    for l in mut + equiv_:
         m = re.search(r'MUTANT=(\S+)', l)
         name = m.group(1)
         tgt = res['equiv'] if l in equiv_ else res['mut']
