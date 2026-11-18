@@ -524,7 +524,8 @@
           4:    do_cmo(li, rnd(3), ok);
           5:    begin if (pm_mode == PG_NOW && l2_n_open_req == 0 && l2_n_open_grant == 0 && l2_n_open_rel == 0 && !ctl_busy)
                         inject_probe(li, 1 + rnd(2)); end
-          6:    begin wfi_req <= rnd(2); end
+          // WFI: a window in which the core issues nothing (it waits for an interrupt); a request may land in it
+          6:    begin wfi_req <= 1'b1; tick(5 + rnd(40)); wfi_req <= 1'b0; end
           default: tick(1 + rnd(10));
         endcase
         tick(rnd(6));

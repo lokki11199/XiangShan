@@ -213,7 +213,7 @@ rtl_cfg_suite() {  # CFG OUT
   [ "$cfg" != KEEP+ISO2 ] && for s in 1 2 3; do for c in D1 R; do "$VER/scripts/run_rtl_dcache.sh" "$cfg" $c $s CTRL_MODEL >> "$out"; done; done
   for m in "CTRL_MUTANT_NO_DRAIN:D8" "CTRL_MUTANT_STALE_QUIET:D8" "CTRL_MUTANT_LATE_HOLDB:D9" \
            "CTRL_MUTANT_NO_REQ_IN_ISO:R D13" "CTRL_MUTANT_NO_ISO_LEAD:D1" "FULL/CTRL_MUTANT_ACK_IN_ISO:D10" \
-           "KEEP/CTRL_MUTANT_LATE_FREEZE:D13" "KEEP+ISO2/CTRL_MUTANT_NO_REQ_IN_ISO:D13"; do
+           "KEEP/CTRL_MUTANT_LATE_FREEZE:D13" "KEEP+ISO2/CTRL_MUTANT_NO_REQ_IN_ISO:R D13"; do
     mcases=${m#*:}; m=${m%%:*}
     case $m in
       */*) [ "${m%%/*}" = "$cfg" ] || continue; m=${m#*/} ;;

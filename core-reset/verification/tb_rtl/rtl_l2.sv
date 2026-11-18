@@ -206,6 +206,12 @@ module rtl_l2 import dp::*; (
     end
   endtask
 
+  // a Probe to this line is offered or open: an Acquire / CBO of the same line waits behind it (CoupledL2 serialises
+  // requests of one block; serving it meanwhile would change the directory under the Probe)
+  function automatic logic probe_on_line(int l);
+    return (probe_open && line_of(probe_addr) == l) || (b_valid && line_of(b_head_addr) == l);
+  endfunction
+
   // expected ProbeAck param for the directory state and the cap of the Probe (1 toB, 2 toN)
   function automatic logic [2:0] expect_param(logic [1:0] d, logic [1:0] cap);
     if (d == 2'd0) return P_NtoN;
@@ -351,7 +357,7 @@ module rtl_l2 import dp::*; (
           push_d(D_CBOACK, 2'd0, eng_src, '0, '0, 1, now, 1'b0, 1'b0, 1'b1);
           eng_wait <= 1'b0;
         end
-      end else if (aq_cnt != 0 && now >= aq_rdy[aq_head]) begin
+      end else if (aq_cnt != 0 && now >= aq_rdy[aq_head] && !probe_on_line(line_of(aq_addr[aq_head]))) begin
         l = line_of(aq_addr[aq_head]);
         aq_head <= (aq_head + 1) % QD; n_aq_cnt--;
         if (aq_op[aq_head] == A_ACQBLOCK || aq_op[aq_head] == A_ACQPERM) begin

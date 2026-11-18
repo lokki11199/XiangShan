@@ -69,8 +69,9 @@ module dcache_tb import dp::*; ;
                   (ctl_l1_req && ctl_gate_block && !ctl_isolate) ? 3'd2 :
                   (ctl_l1_req && ctl_isolate) ? 3'd3 :
                   ctl_core_reset ? 3'd4 : 3'd5;
-  // the core (the stand's drivers) runs outside sReset and sRelease
-  wire core_alive = !(ctl_isolate && !ctl_l1_req);
+  // the core (the stand's drivers) runs unless its reset is asserted or its reset chain has not released the frontend
+  // yet: by the reset itself, not by l1.req (a mutant of l1.req must not silence the core)
+  wire core_alive = !(ctl_core_reset || core_in_reset);
 
   // ------------------------------------------------------------------ L2
   int k_grant_delay = 3, k_rel_delay = 3, k_cbo_delay = 3;
@@ -142,6 +143,7 @@ module dcache_tb import dp::*; ;
   logic iso_q = 1'b0, core_reset_q = 1'b0, done_q = 1'b0, idle_q = 1'b0, gq_q = 1'b0, req_q = 1'b0, l1req_q = 1'b0;
   logic busy_q = 1'b0;
   int iso_run = 0;
+  logic k4_win = 1'b0;
   logic [NL-1:0] stale_q = '0;
   assign l2_reset_point = ctl_core_reset && !core_reset_q;
 
@@ -153,6 +155,8 @@ module dcache_tb import dp::*; ;
     ph_q <= ph; iso_q <= ctl_isolate; core_reset_q <= ctl_core_reset; done_q <= quiesce_done;
     idle_q <= quiesce_idle; gq_q <= gate_quiet && l2_quiet; req_q <= req; l1req_q <= ctl_l1_req; busy_q <= ctl_busy;
     iso_run <= ctl_isolate ? iso_run + 1 : 0;
+    if (ctl_l1_req && !l1req_q) k4_win <= 1'b1;
+    else if (ctl_core_reset || !ctl_busy) k4_win <= 1'b0;
     lf1 <= ld_req_valid && ld_req_ready; la1 <= ld_req_addr; lf2 <= lf1; la2 <= la1;
     li1 <= ctl_isolate; li2 <= li1;
     if (!rst) begin
@@ -178,8 +182,9 @@ module dcache_tb import dp::*; ;
       // ---- K3: no Release starts after done; no new Acquire either
       if (ev_rel_first && done_q && ctl_l1_req) fail("K3", "Release started after the drain reported done");
       if (ev_acq && done_q && ctl_l1_req) fail("K3", "Acquire started after the drain reported done");
-      // ---- K4: from the second cycle of l1.req nothing new is accepted
-      if (ctl_l1_req && l1req_q && core_alive &&
+      // ---- K4: from the second cycle of the sequence (the cycle after l1.req rose) until the core reset nothing new
+      // is accepted, whatever l1.req does meanwhile (S18 of the model bench)
+      if (k4_win && core_alive &&
           ((st_req_valid && st_req_ready) || (amo_req_valid && amo_req_ready) || (cmo_req_valid && cmo_req_ready)))
         fail("K4", "a store / atomic / CMO was accepted while the DCache must be blocked");
       // ---- K5: KEEP: the arrays are not accessed while the core is isolated; FULL: the probes must see something.
