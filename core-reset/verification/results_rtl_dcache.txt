@@ -37,22 +37,22 @@ RTL CFG=FULL CASE=D10 SEED=3 CTRL=rtl : RESULT: PASS  probes=13 gate-acks=13 los
 RTL CFG=FULL CASE=D11 SEED=3 CTRL=rtl : RESULT: PASS  probes=4 gate-acks=4 lost-dirty=8 foreign=0 sram-in-iso=0 cycles=1371 seqs=2 b2b=0 loads=0/6 loads-iso=0 tag-init-iso=216
 RTL CFG=FULL CASE=D12 SEED=3 CTRL=rtl : RESULT: PASS  probes=1 gate-acks=1 lost-dirty=2 foreign=0 sram-in-iso=0 cycles=1023 seqs=3 b2b=1 loads=0/1 loads-iso=0 tag-init-iso=379
 RTL CFG=FULL CASE=D13 SEED=3 CTRL=rtl : RESULT: PASS  probes=2 gate-acks=2 lost-dirty=3 foreign=0 sram-in-iso=3 cycles=797 seqs=1 b2b=0 loads=64/1 loads-iso=1 tag-init-iso=108
-RTL CFG=FULL CASE=R SEED=1 CTRL=rtl : RESULT: PASS  probes=5 gate-acks=5 lost-dirty=9 foreign=2 sram-in-iso=2 cycles=2258 seqs=5 b2b=0 loads=1/15 loads-iso=0 tag-init-iso=541
-RTL CFG=FULL CASE=R SEED=2 CTRL=rtl : RESULT: PASS  probes=5 gate-acks=5 lost-dirty=7 foreign=2 sram-in-iso=3 cycles=1967 seqs=4 b2b=0 loads=1/10 loads-iso=0 tag-init-iso=433
-RTL CFG=FULL CASE=R SEED=3 CTRL=rtl : RESULT: PASS  probes=8 gate-acks=8 lost-dirty=6 foreign=1 sram-in-iso=2 cycles=1635 seqs=3 b2b=0 loads=0/6 loads-iso=0 tag-init-iso=339
-RTL CFG=FULL CASE=R SEED=4 CTRL=rtl : RESULT: FAIL ERROR ERROR K8 l2: line 15: dir=1 cap=2, ProbeAck param 5, expected 2 [t=4565]
-RTL CFG=FULL CASE=R SEED=5 CTRL=rtl : RESULT: PASS  probes=6 gate-acks=6 lost-dirty=7 foreign=0 sram-in-iso=1 cycles=2289 seqs=4 b2b=0 loads=2/14 loads-iso=0 tag-init-iso=439
-RTL CFG=FULL CASE=R SEED=6 CTRL=rtl : RESULT: PASS  probes=5 gate-acks=5 lost-dirty=6 foreign=2 sram-in-iso=2 cycles=1857 seqs=5 b2b=0 loads=0/5 loads-iso=0 tag-init-iso=543
-RTL CFG=FULL CASE=R SEED=7 CTRL=rtl : RESULT: PASS  probes=12 gate-acks=12 lost-dirty=10 foreign=3 sram-in-iso=2 cycles=2675 seqs=4 b2b=0 loads=1/11 loads-iso=0 tag-init-iso=432
-RTL CFG=FULL CASE=R SEED=8 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: CBO: no answer within 4000 cycles [cycle 4356 phase 0]
-RTL CFG=FULL CASE=R SEED=9 CTRL=rtl : RESULT: PASS  probes=8 gate-acks=7 lost-dirty=7 foreign=3 sram-in-iso=2 cycles=1953 seqs=3 b2b=0 loads=0/9 loads-iso=0 tag-init-iso=369
-RTL CFG=FULL CASE=R SEED=10 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: CBO: no answer within 4000 cycles [cycle 4401 phase 0]
+RTL CFG=FULL CASE=R SEED=1 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=19 lost-dirty=20 foreign=10 sram-in-iso=2 cycles=3688 seqs=6 b2b=0 loads=2/19 loads-iso=0 tag-init-iso=648
+RTL CFG=FULL CASE=R SEED=2 CTRL=rtl : RESULT: PASS  probes=17 gate-acks=16 lost-dirty=23 foreign=6 sram-in-iso=2 cycles=3527 seqs=5 b2b=0 loads=7/25 loads-iso=0 tag-init-iso=590
+RTL CFG=FULL CASE=R SEED=3 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=13 lost-dirty=20 foreign=5 sram-in-iso=3 cycles=3627 seqs=5 b2b=0 loads=0/23 loads-iso=0 tag-init-iso=540
+RTL CFG=FULL CASE=R SEED=4 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=17 lost-dirty=19 foreign=3 sram-in-iso=1 cycles=3819 seqs=6 b2b=0 loads=3/20 loads-iso=0 tag-init-iso=649
+RTL CFG=FULL CASE=R SEED=5 CTRL=rtl : RESULT: PASS  probes=15 gate-acks=12 lost-dirty=13 foreign=5 sram-in-iso=1 cycles=3354 seqs=6 b2b=0 loads=1/20 loads-iso=0 tag-init-iso=649
+RTL CFG=FULL CASE=R SEED=6 CTRL=rtl : RESULT: PASS  probes=13 gate-acks=8 lost-dirty=12 foreign=1 sram-in-iso=3 cycles=3219 seqs=5 b2b=0 loads=1/24 loads-iso=0 tag-init-iso=541
+RTL CFG=FULL CASE=R SEED=7 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=16 lost-dirty=16 foreign=4 sram-in-iso=1 cycles=4116 seqs=6 b2b=0 loads=1/19 loads-iso=0 tag-init-iso=706
+RTL CFG=FULL CASE=R SEED=8 CTRL=rtl : RESULT: PASS  probes=12 gate-acks=9 lost-dirty=21 foreign=5 sram-in-iso=1 cycles=3852 seqs=6 b2b=0 loads=0/19 loads-iso=0 tag-init-iso=649
+RTL CFG=FULL CASE=R SEED=9 CTRL=rtl : RESULT: PASS  probes=17 gate-acks=13 lost-dirty=24 foreign=3 sram-in-iso=1 cycles=3840 seqs=6 b2b=0 loads=1/27 loads-iso=0 tag-init-iso=690
+RTL CFG=FULL CASE=R SEED=10 CTRL=rtl : RESULT: PASS  probes=16 gate-acks=11 lost-dirty=21 foreign=4 sram-in-iso=1 cycles=4120 seqs=6 b2b=0 loads=5/24 loads-iso=0 tag-init-iso=697
 RTL CFG=FULL CASE=D1 SEED=1 CTRL=model : RESULT: PASS  probes=3 gate-acks=3 lost-dirty=3 foreign=0 sram-in-iso=0 cycles=1542 seqs=3 b2b=0 loads=0/0 loads-iso=0 tag-init-iso=324
-RTL CFG=FULL CASE=R SEED=1 CTRL=model : RESULT: PASS  probes=5 gate-acks=5 lost-dirty=9 foreign=2 sram-in-iso=2 cycles=2258 seqs=5 b2b=0 loads=1/15 loads-iso=0 tag-init-iso=541
+RTL CFG=FULL CASE=R SEED=1 CTRL=model : RESULT: PASS  probes=20 gate-acks=19 lost-dirty=20 foreign=10 sram-in-iso=2 cycles=3688 seqs=6 b2b=0 loads=2/19 loads-iso=0 tag-init-iso=648
 RTL CFG=FULL CASE=D1 SEED=2 CTRL=model : RESULT: PASS  probes=3 gate-acks=3 lost-dirty=3 foreign=0 sram-in-iso=0 cycles=1542 seqs=3 b2b=0 loads=0/0 loads-iso=0 tag-init-iso=324
-RTL CFG=FULL CASE=R SEED=2 CTRL=model : RESULT: PASS  probes=5 gate-acks=5 lost-dirty=7 foreign=2 sram-in-iso=3 cycles=1967 seqs=4 b2b=0 loads=1/10 loads-iso=0 tag-init-iso=433
+RTL CFG=FULL CASE=R SEED=2 CTRL=model : RESULT: PASS  probes=17 gate-acks=16 lost-dirty=23 foreign=6 sram-in-iso=2 cycles=3527 seqs=5 b2b=0 loads=7/25 loads-iso=0 tag-init-iso=590
 RTL CFG=FULL CASE=D1 SEED=3 CTRL=model : RESULT: PASS  probes=3 gate-acks=3 lost-dirty=3 foreign=0 sram-in-iso=0 cycles=1542 seqs=3 b2b=0 loads=0/0 loads-iso=0 tag-init-iso=324
-RTL CFG=FULL CASE=R SEED=3 CTRL=model : RESULT: PASS  probes=8 gate-acks=8 lost-dirty=6 foreign=1 sram-in-iso=2 cycles=1635 seqs=3 b2b=0 loads=0/6 loads-iso=0 tag-init-iso=339
+RTL CFG=FULL CASE=R SEED=3 CTRL=model : RESULT: PASS  probes=20 gate-acks=13 lost-dirty=20 foreign=5 sram-in-iso=3 cycles=3627 seqs=5 b2b=0 loads=0/23 loads-iso=0 tag-init-iso=540
 RTL CFG=FULL CASE=D8 SEED=1 CTRL=model+CTRL_MUTANT_NO_DRAIN : RESULT: FAIL ERROR K9 [3025] %Error: cr_ctl_models.sv:343: Assertion failed in dcache_tb.ctl: [3025] CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is isolated
 RTL CFG=FULL CASE=D8 SEED=2 CTRL=model+CTRL_MUTANT_NO_DRAIN : RESULT: FAIL ERROR K9 [3025] %Error: cr_ctl_models.sv:343: Assertion failed in dcache_tb.ctl: [3025] CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is isolated
 RTL CFG=FULL CASE=D8 SEED=3 CTRL=model+CTRL_MUTANT_NO_DRAIN : RESULT: FAIL ERROR K9 [3025] %Error: cr_ctl_models.sv:343: Assertion failed in dcache_tb.ctl: [3025] CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is isolated
@@ -66,7 +66,7 @@ RTL CFG=FULL CASE=R SEED=1 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL E
 RTL CFG=FULL CASE=D13 SEED=1 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
 RTL CFG=FULL CASE=R SEED=2 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 358 phase 5]
 RTL CFG=FULL CASE=D13 SEED=2 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
-RTL CFG=FULL CASE=R SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 363 phase 5]
+RTL CFG=FULL CASE=R SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 360 phase 5]
 RTL CFG=FULL CASE=D13 SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
 RTL CFG=FULL CASE=D1 SEED=1 CTRL=model+CTRL_MUTANT_NO_ISO_LEAD : RESULT: FAIL ERROR K9 [2965] %Error: cr_ctl_models.sv:342: Assertion failed in dcache_tb.ctl: [2965] CoreResetCtrl: XSCore reset without an isolation lead
 RTL CFG=FULL CASE=D1 SEED=2 CTRL=model+CTRL_MUTANT_NO_ISO_LEAD : RESULT: FAIL ERROR K9 [2965] %Error: cr_ctl_models.sv:342: Assertion failed in dcache_tb.ctl: [2965] CoreResetCtrl: XSCore reset without an isolation lead
@@ -113,22 +113,22 @@ RTL CFG=KEEP CASE=D10 SEED=3 CTRL=rtl : RESULT: PASS  probes=8 gate-acks=0 lost-
 RTL CFG=KEEP CASE=D11 SEED=3 CTRL=rtl : RESULT: PASS  probes=2 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=936 seqs=2 b2b=0 loads=11/0 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP CASE=D12 SEED=3 CTRL=rtl : RESULT: PASS  probes=1 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=798 seqs=3 b2b=1 loads=2/0 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP CASE=D13 SEED=3 CTRL=rtl : RESULT: PASS  probes=1 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=570 seqs=1 b2b=0 loads=67/0 loads-iso=1 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=1 CTRL=rtl : RESULT: PASS  probes=6 gate-acks=3 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1280 seqs=4 b2b=0 loads=7/3 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=2 CTRL=rtl : RESULT: PASS  probes=5 gate-acks=4 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1313 seqs=3 b2b=0 loads=12/0 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=3 CTRL=rtl : RESULT: PASS  probes=9 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1579 seqs=3 b2b=0 loads=19/5 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=4 CTRL=rtl : RESULT: FAIL ERROR ERROR K8 l2: line 15: dir=1 cap=2, ProbeAck param 5, expected 2 [t=2855]
-RTL CFG=KEEP CASE=R SEED=5 CTRL=rtl : RESULT: PASS  probes=3 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1376 seqs=3 b2b=0 loads=19/6 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=6 CTRL=rtl : RESULT: PASS  probes=3 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1202 seqs=4 b2b=0 loads=10/1 loads-iso=0 tag-init-iso=139
-RTL CFG=KEEP CASE=R SEED=7 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: atomic: no answer within 3000 cycles [cycle 4031 phase 0]
-RTL CFG=KEEP CASE=R SEED=8 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: CBO: no answer within 4000 cycles [cycle 4356 phase 0]
-RTL CFG=KEEP CASE=R SEED=9 CTRL=rtl : RESULT: PASS  probes=3 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1310 seqs=4 b2b=0 loads=14/3 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=10 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: CBO: no answer within 4000 cycles [cycle 4401 phase 0]
+RTL CFG=KEEP CASE=R SEED=1 CTRL=rtl : RESULT: PASS  probes=10 gate-acks=5 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2307 seqs=5 b2b=0 loads=29/3 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=2 CTRL=rtl : RESULT: PASS  probes=14 gate-acks=6 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2195 seqs=6 b2b=0 loads=24/8 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=3 CTRL=rtl : RESULT: PASS  probes=13 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2581 seqs=6 b2b=0 loads=30/3 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=4 CTRL=rtl : RESULT: PASS  probes=19 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2681 seqs=6 b2b=0 loads=34/3 loads-iso=0 tag-init-iso=109
+RTL CFG=KEEP CASE=R SEED=5 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=6 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2331 seqs=6 b2b=0 loads=20/10 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=6 CTRL=rtl : RESULT: PASS  probes=9 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2096 seqs=6 b2b=0 loads=28/9 loads-iso=0 tag-init-iso=109
+RTL CFG=KEEP CASE=R SEED=7 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=8 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2338 seqs=6 b2b=0 loads=21/4 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=8 CTRL=rtl : RESULT: PASS  probes=12 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2471 seqs=6 b2b=0 loads=23/8 loads-iso=0 tag-init-iso=38
+RTL CFG=KEEP CASE=R SEED=9 CTRL=rtl : RESULT: PASS  probes=12 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2021 seqs=5 b2b=0 loads=20/0 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=10 CTRL=rtl : RESULT: PASS  probes=16 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2872 seqs=6 b2b=0 loads=36/3 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP CASE=D1 SEED=1 CTRL=model : RESULT: PASS  probes=3 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=867 seqs=3 b2b=0 loads=3/0 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=1 CTRL=model : RESULT: PASS  probes=6 gate-acks=3 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1280 seqs=4 b2b=0 loads=7/3 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=1 CTRL=model : RESULT: PASS  probes=10 gate-acks=5 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2307 seqs=5 b2b=0 loads=29/3 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP CASE=D1 SEED=2 CTRL=model : RESULT: PASS  probes=3 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=867 seqs=3 b2b=0 loads=3/0 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=2 CTRL=model : RESULT: PASS  probes=5 gate-acks=4 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1313 seqs=3 b2b=0 loads=12/0 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=2 CTRL=model : RESULT: PASS  probes=14 gate-acks=6 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2195 seqs=6 b2b=0 loads=24/8 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP CASE=D1 SEED=3 CTRL=model : RESULT: PASS  probes=3 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=867 seqs=3 b2b=0 loads=3/0 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP CASE=R SEED=3 CTRL=model : RESULT: PASS  probes=9 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1579 seqs=3 b2b=0 loads=19/5 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP CASE=R SEED=3 CTRL=model : RESULT: PASS  probes=13 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2581 seqs=6 b2b=0 loads=30/3 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP CASE=D8 SEED=1 CTRL=model+CTRL_MUTANT_NO_DRAIN : RESULT: FAIL ERROR K9 [3025] %Error: cr_ctl_models.sv:343: Assertion failed in dcache_tb.ctl: [3025] CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is isolated
 RTL CFG=KEEP CASE=D8 SEED=2 CTRL=model+CTRL_MUTANT_NO_DRAIN : RESULT: FAIL ERROR K9 [3025] %Error: cr_ctl_models.sv:343: Assertion failed in dcache_tb.ctl: [3025] CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is isolated
 RTL CFG=KEEP CASE=D8 SEED=3 CTRL=model+CTRL_MUTANT_NO_DRAIN : RESULT: FAIL ERROR K9 [3025] %Error: cr_ctl_models.sv:343: Assertion failed in dcache_tb.ctl: [3025] CoreResetCtrl: TileLink traffic between XSCore and L2 while XSCore is isolated
@@ -142,7 +142,7 @@ RTL CFG=KEEP CASE=R SEED=1 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL E
 RTL CFG=KEEP CASE=D13 SEED=1 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
 RTL CFG=KEEP CASE=R SEED=2 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 358 phase 5]
 RTL CFG=KEEP CASE=D13 SEED=2 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
-RTL CFG=KEEP CASE=R SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 363 phase 5]
+RTL CFG=KEEP CASE=R SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 360 phase 5]
 RTL CFG=KEEP CASE=D13 SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
 RTL CFG=KEEP CASE=D1 SEED=1 CTRL=model+CTRL_MUTANT_NO_ISO_LEAD : RESULT: FAIL ERROR K9 [2965] %Error: cr_ctl_models.sv:342: Assertion failed in dcache_tb.ctl: [2965] CoreResetCtrl: XSCore reset without an isolation lead
 RTL CFG=KEEP CASE=D1 SEED=2 CTRL=model+CTRL_MUTANT_NO_ISO_LEAD : RESULT: FAIL ERROR K9 [2965] %Error: cr_ctl_models.sv:342: Assertion failed in dcache_tb.ctl: [2965] CoreResetCtrl: XSCore reset without an isolation lead
@@ -162,17 +162,20 @@ RTL CFG=KEEP+ISO2 CASE=D8 SEED=3 CTRL=rtl : RESULT: PASS  probes=2 gate-acks=0 l
 RTL CFG=KEEP+ISO2 CASE=D9 SEED=3 CTRL=rtl : RESULT: PASS  probes=4 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=957 seqs=4 b2b=0 loads=2/4 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP+ISO2 CASE=D10 SEED=3 CTRL=rtl : RESULT: PASS  probes=10 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1975 seqs=10 b2b=0 loads=5/10 loads-iso=0 tag-init-iso=0
 RTL CFG=KEEP+ISO2 CASE=D13 SEED=3 CTRL=rtl : RESULT: PASS  probes=1 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=571 seqs=1 b2b=0 loads=67/0 loads-iso=2 tag-init-iso=0
-RTL CFG=KEEP+ISO2 CASE=R SEED=1 CTRL=rtl : RESULT: PASS  probes=6 gate-acks=3 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1283 seqs=4 b2b=0 loads=7/3 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP+ISO2 CASE=R SEED=2 CTRL=rtl : RESULT: PASS  probes=5 gate-acks=4 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1316 seqs=3 b2b=0 loads=12/0 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP+ISO2 CASE=R SEED=3 CTRL=rtl : RESULT: PASS  probes=9 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1581 seqs=3 b2b=0 loads=19/5 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP+ISO2 CASE=R SEED=4 CTRL=rtl : RESULT: FAIL ERROR ERROR K8 l2: line 15: dir=1 cap=2, ProbeAck param 5, expected 2 [t=2855]
-RTL CFG=KEEP+ISO2 CASE=R SEED=5 CTRL=rtl : RESULT: PASS  probes=3 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1378 seqs=3 b2b=0 loads=19/6 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP+ISO2 CASE=R SEED=6 CTRL=rtl : RESULT: PASS  probes=3 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1206 seqs=4 b2b=0 loads=10/1 loads-iso=0 tag-init-iso=139
-RTL CFG=KEEP+ISO2 CASE=R SEED=7 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: atomic: no answer within 3000 cycles [cycle 4033 phase 0]
-RTL CFG=KEEP+ISO2 CASE=R SEED=8 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: CBO: no answer within 4000 cycles [cycle 4357 phase 0]
-RTL CFG=KEEP+ISO2 CASE=R SEED=9 CTRL=rtl : RESULT: PASS  probes=3 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=1312 seqs=4 b2b=0 loads=14/3 loads-iso=0 tag-init-iso=0
-RTL CFG=KEEP+ISO2 CASE=R SEED=10 CTRL=rtl : RESULT: FAIL ERROR ERROR K2: CBO: no answer within 4000 cycles [cycle 4402 phase 0]
+RTL CFG=KEEP+ISO2 CASE=R SEED=1 CTRL=rtl : RESULT: PASS  probes=10 gate-acks=5 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2311 seqs=5 b2b=0 loads=29/3 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=2 CTRL=rtl : RESULT: PASS  probes=14 gate-acks=6 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2200 seqs=6 b2b=0 loads=24/8 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=3 CTRL=rtl : RESULT: PASS  probes=15 gate-acks=3 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2501 seqs=6 b2b=0 loads=28/3 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=4 CTRL=rtl : RESULT: PASS  probes=19 gate-acks=2 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2686 seqs=6 b2b=0 loads=34/3 loads-iso=0 tag-init-iso=110
+RTL CFG=KEEP+ISO2 CASE=R SEED=5 CTRL=rtl : RESULT: PASS  probes=16 gate-acks=4 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2371 seqs=6 b2b=0 loads=26/9 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=6 CTRL=rtl : RESULT: PASS  probes=9 gate-acks=0 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2101 seqs=6 b2b=0 loads=28/9 loads-iso=0 tag-init-iso=110
+RTL CFG=KEEP+ISO2 CASE=R SEED=7 CTRL=rtl : RESULT: PASS  probes=20 gate-acks=8 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2342 seqs=6 b2b=0 loads=21/4 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=8 CTRL=rtl : RESULT: PASS  probes=12 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2476 seqs=6 b2b=0 loads=23/8 loads-iso=0 tag-init-iso=38
+RTL CFG=KEEP+ISO2 CASE=R SEED=9 CTRL=rtl : RESULT: PASS  probes=12 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2025 seqs=5 b2b=0 loads=20/0 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=10 CTRL=rtl : RESULT: PASS  probes=16 gate-acks=1 lost-dirty=0 foreign=0 sram-in-iso=0 cycles=2844 seqs=6 b2b=0 loads=36/3 loads-iso=0 tag-init-iso=0
+RTL CFG=KEEP+ISO2 CASE=R SEED=1 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 297 phase 5]
 RTL CFG=KEEP+ISO2 CASE=D13 SEED=1 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
+RTL CFG=KEEP+ISO2 CASE=R SEED=2 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 358 phase 5]
 RTL CFG=KEEP+ISO2 CASE=D13 SEED=2 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
+RTL CFG=KEEP+ISO2 CASE=R SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 360 phase 5]
 RTL CFG=KEEP+ISO2 CASE=D13 SEED=3 CTRL=model+CTRL_MUTANT_NO_REQ_IN_ISO : RESULT: FAIL ERROR ERROR TB: phase derived from the outputs (5) differs from the model state (3) [cycle 390 phase 5]
-rtl_dcache: runs=132 pass=121 fail=11 mutant-runs=45 caught=45
+rtl_dcache: runs=132 pass=132 fail=0 mutant-runs=48 caught=48
