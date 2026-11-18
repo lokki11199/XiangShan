@@ -36,6 +36,8 @@ ProbeAck NtoN L2 отдаёт их как действительные (SnpOnce,
 | 17.11.2026 | RTL-тест DCache D1–D13 FULL: 13/13 с моделью и с RTL-контроллером (стенд нашёл 5 своих ошибок) | 5c67d43 |
 | 18.11.2026 | XSNoCTop off/full/keep PASS; идентичность при EnableCoreReset=false с 7b16188: IDENTICAL (XSNoCTop, DCache) | 2fe7730 |
 | 18.11.2026 | тест изоляции тайла на RTL XSTile: FULL/KEEP PASS, TM1–TM3 пойманы | 1a9c5dd |
+| 18.11.2026 | RTL-тест DCache (FULL, KEEP, KEEP+ISO2; D1–D13 × 3, R × 10): 132/132, мутанты 48/48; стенд нашёл ещё 7 своих ошибок | 763bbb2 |
+| 18.11.2026 | PDF v6, черновик 51 стр. (генератор `core-reset/doc/`) | 7f3b097 |
 
 Решения пользователя по TESTPLAN §11 (16.11.2026): RTL-тест DCache — в `--quick` (FULL, сид 1), полный набор — в
 `--full`; эталон 7b16188 — разрешены временный git worktree в scratchpad, один прогон и удаление без отдельного
